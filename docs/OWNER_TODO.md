@@ -34,6 +34,7 @@ _No owner actions required for Phase 0._
 ### Legal & compliance
 
 - [ ] **LAUNCH BLOCKER**: Sign off GST rate, product HSN codes (`products.hsn_code`), shipping tax treatment (`gst_config`), and invoice format with an accountant before accepting any live orders.
+- [ ] **LAUNCH BLOCKER**: Review and replace placeholder legal policies ([/privacy](/privacy), [/terms](/terms), [/shipping-returns](/shipping-returns)) with lawyer-approved text, then set `legal_pages_approved = true` (production checkout stays disabled until enabled).
 - [ ] Confirm FSSAI licence number and registered address.
 - [ ] Supply final Shipping, Refund & Cancellation, Privacy and Terms text (reviewed by a lawyer).
 - [ ] Confirm GST registration details (GSTIN, HSN code for edible oils).
@@ -41,7 +42,8 @@ _No owner actions required for Phase 0._
 
 ### Payments
 
-- [ ] Create a Razorpay account and supply the live API keys (via environment secrets, never in code).
+- [ ] Create a Razorpay account and supply the live API keys (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`) plus `PICKUP_CODE_HMAC_SECRET` in production environment secrets (never commit in code).
+- [ ] Confirm whether to keep Cash on Delivery enabled (`cod_config`), review `cod_fee_paise` (default ₹0) and `cod_max_order_paise` (default ₹5,000), and do NOT enable COD or Pay-at-Store in production until Phase 7 SMS OTP verification is active.
 - [ ] Do a small-value live test payment and refund before full launch.
 
 ### Notifications

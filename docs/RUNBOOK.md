@@ -1,7 +1,7 @@
 # Operations Runbook — [YOUR BRAND]
 
 > Living operations reference updated as infrastructure is added across phases.
-> Last updated: Phase 2
+> Last updated: Phase 5
 
 ---
 
@@ -39,6 +39,16 @@
 - Public rate limit default: `120 req/min` per client IP.
 - `GET /api/pincode/:pincode`: `20 req/min` per client IP.
 - `POST /api/cart/validate`: `60 req/min` per signed `X-Cart-Session` (or per IP if unauthenticated) within a `300 req/min` CG-NAT-friendly per-IP ceiling. Invalid coupon guesses cap at `10 / 15 min` per IP and per session (falls back to in-memory if Redis degrades).
+- `POST /api/checkout`: `12 req/min` per session and `30 req/min` per client IP; requires a unique `Idempotency-Key` (expires after 24 hours).
+- `POST /api/checkout/verify` & `POST /api/checkout/fail`: `20 req/min` per client IP.
+
+---
+
+## Checkout, Payments & Reservations
+
+- **Gateway safety**: `APP_ENV=production` or `IS_PRODUCTION_DB=true` enforces `PAYMENT_GATEWAY=razorpay` and refuses boot if `PAYMENT_GATEWAY=mock` or `ALLOW_MOCK_GATEWAY=true`, or if `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, or `PICKUP_CODE_HMAC_SECRET` are missing.
+- **Online reservations**: Orders created with `ONLINE` payment reserve `variants.reserved` for `15 minutes` (with `2-minute` grace window). Before expiring an unpaid order, the expiry sweeper checks Razorpay payment status so completed payments still confirm via `markOrderPaid`. Late payments when stock has already sold out flag `orders.needs_attention = true` and trigger automatic gateway refunds.
+- **Legal policy & COD safeguards**: `legal_pages_approved` defaults to `false` (blocking production checkout and hiding placeholder policies). `cod_config.enabled` and `store_pickup_config.payAtStoreEnabled` default to `false` in production until Phase 7 SMS OTP verification is added.
 
 ---
 

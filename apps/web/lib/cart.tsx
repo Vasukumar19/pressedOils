@@ -29,6 +29,18 @@ import { buildAvailabilityMapFromProducts, useLiveAvailability } from './use-liv
 
 export const CART_STORAGE_KEY = 'cart:v2' as const
 export const CART_SESSION_STORAGE_KEY = 'cart:session' as const
+export const CART_PREFS_STORAGE_KEY = 'cart:prefs:v1' as const
+
+const cartPrefsSchema = z
+  .object({
+    fulfilmentMethod: z
+      .enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP])
+      .optional(),
+    pickupLocationId: z.string().uuid().optional(),
+    pincode: z.string().max(6).optional(),
+    couponCode: z.string().max(32).optional(),
+  })
+  .strict()
 
 export interface CartStoredItem {
   variantId: string
@@ -173,7 +185,17 @@ interface CartContextValue {
   freeShippingEnabled: boolean
   freeShippingThresholdPaise: number | null
   storePickupEnabled: boolean
+  payAtStoreEnabled: boolean
   pickupLocations: PickupLocationPublicDto[]
+  codEnabled: boolean
+  codFeePaise: number
+  codMaxOrderPaise: number | null
+  legalPagesApproved: boolean
+  dpdpPolicyVersion: string
+  checkoutEnabled: boolean
+  paymentGateway: 'razorpay' | 'mock'
+  getSessionToken: () => string | undefined
+  setSessionToken: (token: string | null) => void
   fulfilmentMethod: FulfilmentMethod
   setFulfilmentMethod: (method: FulfilmentMethod) => void
   pickupLocationId: string | undefined
@@ -272,7 +294,7 @@ export function CartProvider({
     registerProducts(initialProducts)
   }, [initialProducts, registerProducts])
 
-  // Load persisted cart:v2 safely on mount and keep synchronized across tabs
+  // Load persisted cart:v2 and cart:prefs:v1 safely on mount
   useEffect(() => {
     const loadFromStorage = () => {
       try {
@@ -282,6 +304,27 @@ export function CartProvider({
           window.localStorage.removeItem(CART_STORAGE_KEY)
         }
         setItems(parsed.items)
+
+        const rawPrefs = window.sessionStorage.getItem(CART_PREFS_STORAGE_KEY)
+        if (rawPrefs) {
+          const parsedPrefs = cartPrefsSchema.safeParse(JSON.parse(rawPrefs))
+          if (parsedPrefs.success) {
+            if (parsedPrefs.data.fulfilmentMethod) {
+              setFulfilmentMethod(parsedPrefs.data.fulfilmentMethod)
+            }
+            if (parsedPrefs.data.pickupLocationId) {
+              setPickupLocationId(parsedPrefs.data.pickupLocationId)
+            }
+            if (typeof parsedPrefs.data.pincode === 'string') {
+              setPincode(parsedPrefs.data.pincode)
+            }
+            if (typeof parsedPrefs.data.couponCode === 'string') {
+              setCouponCode(parsedPrefs.data.couponCode)
+            }
+          } else {
+            window.sessionStorage.removeItem(CART_PREFS_STORAGE_KEY)
+          }
+        }
       } catch {
         setItems([])
       } finally {
@@ -542,6 +585,43 @@ export function CartProvider({
     [items, persistItems],
   )
 
+  useEffect(() => {
+    if (!hydrated) return
+    try {
+      window.sessionStorage.setItem(
+        CART_PREFS_STORAGE_KEY,
+        JSON.stringify({
+          fulfilmentMethod,
+          ...(pickupLocationId ? { pickupLocationId } : {}),
+          pincode,
+          couponCode,
+        }),
+      )
+    } catch {
+      // Ignore storage error
+    }
+  }, [couponCode, fulfilmentMethod, hydrated, pickupLocationId, pincode])
+
+  const getSessionToken = useCallback((): string | undefined => {
+    try {
+      return window.sessionStorage.getItem(CART_SESSION_STORAGE_KEY) ?? undefined
+    } catch {
+      return undefined
+    }
+  }, [])
+
+  const setSessionToken = useCallback((token: string | null) => {
+    try {
+      if (token) {
+        window.sessionStorage.setItem(CART_SESSION_STORAGE_KEY, token)
+      } else {
+        window.sessionStorage.removeItem(CART_SESSION_STORAGE_KEY)
+      }
+    } catch {
+      // Ignore storage error
+    }
+  }, [])
+
   const clear = useCallback(() => {
     persistItems([])
     setValidation(null)
@@ -627,6 +707,14 @@ export function CartProvider({
 
   const freeShippingEnabled = Boolean(initialSettings?.freeShippingEnabled)
   const freeShippingThresholdPaise = initialSettings?.freeShippingThresholdPaise ?? null
+  const payAtStoreEnabled = Boolean(storePickupEnabled && initialSettings?.payAtStoreEnabled)
+  const codEnabled = Boolean(initialSettings?.codEnabled)
+  const codFeePaise = initialSettings?.codFeePaise ?? 0
+  const codMaxOrderPaise = initialSettings?.codMaxOrderPaise ?? null
+  const legalPagesApproved = Boolean(initialSettings?.legalPagesApproved)
+  const dpdpPolicyVersion = initialSettings?.dpdpPolicyVersion ?? '2026-11-draft-v1'
+  const checkoutEnabled = initialSettings?.checkoutEnabled ?? true
+  const paymentGateway = initialSettings?.paymentGateway ?? 'mock'
 
   const value = useMemo<CartContextValue>(
     () => ({
@@ -647,7 +735,17 @@ export function CartProvider({
       freeShippingEnabled,
       freeShippingThresholdPaise,
       storePickupEnabled,
+      payAtStoreEnabled,
       pickupLocations,
+      codEnabled,
+      codFeePaise,
+      codMaxOrderPaise,
+      legalPagesApproved,
+      dpdpPolicyVersion,
+      checkoutEnabled,
+      paymentGateway,
+      getSessionToken,
+      setSessionToken,
       fulfilmentMethod: storePickupEnabled ? fulfilmentMethod : FULFILMENT_METHOD.DELIVERY,
       setFulfilmentMethod,
       pickupLocationId,
@@ -665,20 +763,29 @@ export function CartProvider({
     }),
     [
       add,
+      checkoutEnabled,
       clear,
+      codEnabled,
+      codFeePaise,
+      codMaxOrderPaise,
       count,
       couponCode,
+      dpdpPolicyVersion,
       freeShippingEnabled,
       freeShippingThresholdPaise,
       fulfilmentMethod,
+      getSessionToken,
       getVariantAvailability,
       getVariantQty,
       hasUnresolvedItems,
       isOpen,
       isValidating,
       items,
+      legalPagesApproved,
       lines,
       maxOrderQtyPerVariant,
+      payAtStoreEnabled,
+      paymentGateway,
       pickupLocationId,
       pickupLocations,
       pincode,
@@ -687,6 +794,7 @@ export function CartProvider({
       remove,
       runServerValidation,
       setQty,
+      setSessionToken,
       storePickupEnabled,
       subtotalPaise,
       validateError,

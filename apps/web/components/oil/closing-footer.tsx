@@ -108,9 +108,18 @@ export function Footer({ settings }: FooterProps) {
               Policies
             </p>
             <p className="text-ink/80 flex flex-wrap gap-x-6 gap-y-2">
-              <span className="ph">[SHIPPING POLICY]</span>
-              <span className="ph">[PRIVACY POLICY]</span>
-              <span className="ph">[RETURNS &amp; REPLACEMENT TERMS]</span>
+              <Link
+                href="/shipping-returns"
+                className="link-underline inline-flex min-h-11 items-center"
+              >
+                Shipping &amp; Returns
+              </Link>
+              <Link href="/privacy" className="link-underline inline-flex min-h-11 items-center">
+                Privacy Policy
+              </Link>
+              <Link href="/terms" className="link-underline inline-flex min-h-11 items-center">
+                Terms &amp; Conditions
+              </Link>
             </p>
           </div>
         </div>

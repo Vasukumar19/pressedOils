@@ -2,6 +2,15 @@ import {
   type CartValidateRequest,
   cartValidateResponseSchema,
   type CartValidateResponseDto,
+  type CheckoutFailRequest,
+  checkoutFailResponseSchema,
+  type CheckoutFailResponseDto,
+  type CheckoutRequest,
+  checkoutResponseSchema,
+  type CheckoutResponseDto,
+  type CheckoutVerifyRequest,
+  checkoutVerifyResponseSchema,
+  type CheckoutVerifyResponseDto,
   DEFAULT_MAX_QTY_PER_VARIANT,
   pincodeLookupResponseSchema,
   type PincodeLookupResponseDto,
@@ -222,4 +231,128 @@ export async function validateCartOnServer(
     data: cartValidateResponseSchema.parse(json),
     nextSessionToken,
   }
+}
+
+async function readApiErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const errBody = (await res.json()) as { message?: string }
+    if (typeof errBody?.message === 'string' && errBody.message.trim()) {
+      return errBody.message
+    }
+  } catch {
+    // Ignore parse error and fall back to status text
+  }
+  return fallback
+}
+
+export async function createCheckoutOrder(
+  payload: CheckoutRequest,
+  options: { idempotencyKey: string; sessionToken?: string; signal?: AbortSignal },
+): Promise<{ data: CheckoutResponseDto; nextSessionToken: string | null }> {
+  const url = `${getPublicApiBaseUrl()}/checkout`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Idempotency-Key': options.idempotencyKey,
+      ...(options.sessionToken ? { 'X-Cart-Session': options.sessionToken } : {}),
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: options.signal ?? AbortSignal.timeout(15_000),
+  })
+
+  const nextSessionToken = res.headers.get('x-cart-session')
+  if (!res.ok) {
+    throw new ApiRequestError(
+      await readApiErrorMessage(res, `Checkout could not be completed (${res.status})`),
+      res.status,
+      url,
+    )
+  }
+
+  const json: unknown = await res.json()
+  return {
+    data: checkoutResponseSchema.parse(json),
+    nextSessionToken,
+  }
+}
+
+export async function verifyCheckoutPayment(
+  payload: CheckoutVerifyRequest,
+  signal?: AbortSignal,
+): Promise<CheckoutVerifyResponseDto> {
+  const url = `${getPublicApiBaseUrl()}/checkout/verify`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: signal ?? AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    throw new ApiRequestError(
+      await readApiErrorMessage(res, `Payment verification failed (${res.status})`),
+      res.status,
+      url,
+    )
+  }
+  const json: unknown = await res.json()
+  return checkoutVerifyResponseSchema.parse(json)
+}
+
+export async function failCheckoutPayment(
+  payload: CheckoutFailRequest,
+  signal?: AbortSignal,
+): Promise<CheckoutFailResponseDto> {
+  const url = `${getPublicApiBaseUrl()}/checkout/fail`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: signal ?? AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    throw new ApiRequestError(
+      await readApiErrorMessage(res, `Unable to cancel payment session (${res.status})`),
+      res.status,
+      url,
+    )
+  }
+  const json: unknown = await res.json()
+  return checkoutFailResponseSchema.parse(json)
+}
+
+export async function mockCompleteCheckoutPayment(
+  orderId: string,
+  signal?: AbortSignal,
+): Promise<CheckoutVerifyResponseDto> {
+  const url = `${getPublicApiBaseUrl()}/checkout/mock-complete`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ orderId }),
+    cache: 'no-store',
+    signal: signal ?? AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    throw new ApiRequestError(
+      await readApiErrorMessage(res, `Mock payment failed (${res.status})`),
+      res.status,
+      url,
+    )
+  }
+  const json: unknown = await res.json()
+  return checkoutVerifyResponseSchema.parse(json)
 }

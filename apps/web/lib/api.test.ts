@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
+  createCheckoutOrder,
+  failCheckoutPayment,
   fetchLiveAvailability,
   fetchPublicProductBySlug,
   fetchPublicProducts,
   validateCartOnServer,
+  verifyCheckoutPayment,
 } from './api'
+import { canRenderDraftLegalCopy } from './legal'
 
 describe('storefront API client', () => {
   afterEach(() => {
@@ -126,5 +130,142 @@ describe('storefront API client', () => {
     await expect(validateCartOnServer({ items: [], fulfilmentMethod: 'DELIVERY' })).rejects.toThrow(
       /Too many invalid coupon attempts/,
     )
+  })
+
+  it('sends Idempotency-Key on POST /checkout, parses payment verify & fail contracts, and gates draft legal copy in production', async () => {
+    const sampleOrder = {
+      id: '550e8400-e29b-41d4-a716-446655440777',
+      orderNumber: 'ORD-261125-ABCDE',
+      fulfilmentMethod: 'DELIVERY',
+      paymentMethod: 'COD',
+      paymentStatus: 'PENDING',
+      orderStatus: 'COD_PENDING',
+      itemsSubtotalPaise: 20000,
+      discountPaise: 0,
+      netItemsTotalPaise: 20000,
+      shippingPaise: 5000,
+      codFeePaise: 0,
+      taxAddedPaise: 0,
+      totalPaise: 25000,
+      tax: { showTaxBreakdown: false },
+      couponCode: null,
+      pickup: null,
+      pickupCode: null,
+      reservationExpiresAt: null,
+      needsAttention: false,
+      dpdpPolicyVersion: '2026-11-draft-v1',
+      marketingConsent: false,
+      createdAt: '2026-11-25T10:00:00.000Z',
+      items: [],
+    }
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ order: sampleOrder, payment: null }), {
+          status: 201,
+          headers: { 'x-cart-session': 'sess-new.sig' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            order: { ...sampleOrder, orderStatus: 'PAID', paymentStatus: 'CAPTURED' },
+            alreadyProcessed: false,
+            autoRefunded: false,
+            message: 'Payment confirmed.',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            orderId: sampleOrder.id,
+            orderNumber: sampleOrder.orderNumber,
+            orderStatus: 'CANCELLED',
+            released: true,
+            message: 'Reserved stock released cleanly.',
+          }),
+          { status: 200 },
+        ),
+      )
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const placed = await createCheckoutOrder(
+      {
+        contact: { name: 'Asha', phone: '+919876543210' },
+        fulfilmentMethod: 'DELIVERY',
+        address: {
+          name: 'Asha',
+          phone: '+919876543210',
+          line1: '12 Main Road',
+          city: 'Chennai',
+          state: 'Tamil Nadu',
+          pincode: '600001',
+        },
+        items: [{ variantId: '550e8400-e29b-41d4-a716-446655440001', qty: 1 }],
+        paymentMethod: 'COD',
+        dpdpConsent: true,
+        marketingConsent: false,
+      },
+      { idempotencyKey: 'test-idempotency-key-1234', sessionToken: 'prev.tok' },
+    )
+    expect(placed.data.order.orderNumber).toBe('ORD-261125-ABCDE')
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'Idempotency-Key': 'test-idempotency-key-1234',
+      'X-Cart-Session': 'prev.tok',
+    })
+
+    const verified = await verifyCheckoutPayment({
+      orderId: sampleOrder.id,
+      razorpayOrderId: 'order_123',
+      razorpayPaymentId: 'pay_123',
+      razorpaySignature: 'sig_123',
+    })
+    expect(verified.order.orderStatus).toBe('PAID')
+
+    const failed = await failCheckoutPayment({
+      orderId: sampleOrder.id,
+      reason: 'MODAL_DISMISSED',
+    })
+    expect(failed.released).toBe(true)
+
+    const prevAppEnv = process.env.APP_ENV
+    process.env.APP_ENV = 'production'
+    try {
+      expect(
+        canRenderDraftLegalCopy({
+          brandName: 'Brand',
+          currency: 'INR',
+          freeShippingEnabled: false,
+          freeShippingThresholdPaise: null,
+          defaultShippingPaise: 7000,
+          gstRateBps: 500,
+          gstIncludedInPrice: true,
+          showTaxBreakdown: false,
+          storePickupEnabled: false,
+          payAtStoreEnabled: false,
+          pickupLocations: [],
+          codEnabled: false,
+          codFeePaise: 0,
+          codMaxOrderPaise: null,
+          legalPagesApproved: false,
+          dpdpPolicyVersion: '2026-11-draft-v1',
+          checkoutEnabled: false,
+          paymentGateway: 'razorpay',
+          fssaiNumber: '123',
+          supportEmail: 'a@b.com',
+          supportPhone: '+919999999999',
+          registeredAddress: 'Chennai',
+          maxQtyPerVariant: 10,
+          requireLabReportForActivation: true,
+          showSampleDataBanner: false,
+        }),
+      ).toBe(false)
+    } finally {
+      process.env.APP_ENV = prevAppEnv
+    }
   })
 })

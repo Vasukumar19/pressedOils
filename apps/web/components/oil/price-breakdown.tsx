@@ -4,11 +4,13 @@ import { formatPaiseToInr, type CartValidateResponseDto } from '@pressedoils/sha
 
 interface PriceBreakdownProps {
   validation: CartValidateResponseDto
+  codFeePaise?: number
   className?: string
 }
 
-export function PriceBreakdown({ validation, className }: PriceBreakdownProps) {
+export function PriceBreakdown({ validation, codFeePaise = 0, className }: PriceBreakdownProps) {
   const { summary, freeShipping, tax, pincode } = validation
+  const displayedTotalPaise = summary.totalPaise + codFeePaise
 
   const progressRatio =
     freeShipping && freeShipping.thresholdPaise > 0
@@ -75,6 +77,15 @@ export function PriceBreakdown({ validation, className }: PriceBreakdownProps) {
           </dd>
         </div>
 
+        {codFeePaise > 0 ? (
+          <div className="flex items-baseline justify-between gap-4">
+            <dt className="text-sage tracking-[0.16em] uppercase">COD fee</dt>
+            <dd className="text-forest font-medium tabular-nums">
+              {formatPaiseToInr(codFeePaise)}
+            </dd>
+          </div>
+        ) : null}
+
         {tax.showTaxBreakdown ? (
           <div className="flex items-baseline justify-between gap-4">
             <dt className="text-sage tracking-[0.16em] uppercase">
@@ -91,7 +102,7 @@ export function PriceBreakdown({ validation, className }: PriceBreakdownProps) {
           {summary.totalLabel}
         </span>
         <span className="font-serif text-3xl font-medium tabular-nums">
-          {formatPaiseToInr(summary.totalPaise)}
+          {formatPaiseToInr(displayedTotalPaise)}
         </span>
       </div>
     </div>

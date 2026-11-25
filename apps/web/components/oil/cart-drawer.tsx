@@ -41,6 +41,7 @@ export function CartDrawer() {
     validateError,
     revalidateCartNow,
     hasUnresolvedItems,
+    checkoutEnabled,
   } = useCart()
 
   const drawerRef = useRef<HTMLElement>(null)
@@ -117,6 +118,13 @@ export function CartDrawer() {
   }
 
   const validatedById = new Map((validation?.items ?? []).map((item) => [item.variantId, item]))
+  const hasBlockingItemIssue = (validation?.items ?? []).some(
+    (item) =>
+      item.status === 'OUT_OF_STOCK' ||
+      item.status === 'UNAVAILABLE' ||
+      item.status === 'QUANTITY_UNAVAILABLE',
+  )
+  const canProceedToCheckout = checkoutEnabled && !hasBlockingItemIssue && !isValidating
 
   return (
     <AnimatePresence>
@@ -508,16 +516,46 @@ export function CartDrawer() {
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  disabled
-                  className="bg-forest/40 text-ivory mt-5 min-h-12 w-full cursor-not-allowed text-[12px] font-semibold tracking-[0.2em] uppercase"
-                >
-                  Checkout opens in Phase 5
-                </button>
-                <p className="text-sage mt-2.5 text-xs">
-                  Totals and stock are verified live by the server. Checkout connects in Phase 5.
-                </p>
+                {!checkoutEnabled ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled
+                      className="bg-forest/40 text-ivory mt-5 min-h-12 w-full cursor-not-allowed text-[12px] font-semibold tracking-[0.2em] uppercase"
+                    >
+                      Checkout opening soon
+                    </button>
+                    <p className="text-sage mt-2.5 text-xs">
+                      Store legal policies are pending owner approval before public checkout opens.
+                    </p>
+                  </>
+                ) : !canProceedToCheckout ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled
+                      className="bg-forest/40 text-ivory mt-5 min-h-12 w-full cursor-not-allowed text-[12px] font-semibold tracking-[0.2em] uppercase"
+                    >
+                      {hasBlockingItemIssue ? 'Adjust bag items to continue' : 'Updating bag…'}
+                    </button>
+                    <p className="text-sage mt-2.5 text-xs">
+                      Resolve unavailable quantities above before proceeding to checkout.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/checkout"
+                      onClick={() => setOpen(false)}
+                      className="bg-forest text-ivory hover:bg-ink mt-5 flex min-h-12 w-full items-center justify-center text-[12px] font-semibold tracking-[0.2em] uppercase transition-colors"
+                    >
+                      Proceed to checkout
+                    </Link>
+                    <p className="text-sage mt-2.5 text-xs">
+                      Prices, delivery availability, and stock are verified live on checkout.
+                    </p>
+                  </>
+                )}
               </footer>
             )}
           </motion.aside>
