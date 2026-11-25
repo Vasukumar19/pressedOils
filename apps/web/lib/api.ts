@@ -12,6 +12,12 @@ import {
   checkoutVerifyResponseSchema,
   type CheckoutVerifyResponseDto,
   DEFAULT_MAX_QTY_PER_VARIANT,
+  type OtpSendRequestDto,
+  otpSendResponseSchema,
+  type OtpSendResponseDto,
+  type OtpVerifyRequestDto,
+  otpVerifyResponseSchema,
+  type OtpVerifyResponseDto,
   pincodeLookupResponseSchema,
   type PincodeLookupResponseDto,
   productListQuerySchema,
@@ -40,6 +46,8 @@ export class ApiRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly url: string,
+    public readonly code?: string,
+    public readonly captchaRequired?: boolean,
   ) {
     super(message)
     this.name = 'ApiRequestError'
@@ -355,4 +363,83 @@ export async function mockCompleteCheckoutPayment(
   }
   const json: unknown = await res.json()
   return checkoutVerifyResponseSchema.parse(json)
+}
+
+export async function sendOtpCode(
+  payload: OtpSendRequestDto,
+  options: { sessionToken?: string; signal?: AbortSignal } = {},
+): Promise<{ data: OtpSendResponseDto; nextSessionToken: string | null }> {
+  const url = `${getPublicApiBaseUrl()}/otp/send`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(options.sessionToken ? { 'X-Cart-Session': options.sessionToken } : {}),
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: options.signal ?? AbortSignal.timeout(12_000),
+  })
+
+  const nextSessionToken = res.headers.get('x-cart-session')
+  if (!res.ok) {
+    let message = `Unable to send verification OTP (${res.status})`
+    let code: string | undefined
+    let captchaRequired: boolean | undefined
+    try {
+      const errBody = (await res.json()) as {
+        message?: string
+        code?: string
+        captchaRequired?: boolean
+      }
+      if (typeof errBody?.message === 'string' && errBody.message.trim()) {
+        message = errBody.message
+      }
+      code = errBody?.code
+      captchaRequired = errBody?.captchaRequired
+    } catch {
+      // Ignore parse failure
+    }
+    throw new ApiRequestError(message, res.status, url, code, captchaRequired)
+  }
+
+  const json: unknown = await res.json()
+  return {
+    data: otpSendResponseSchema.parse(json),
+    nextSessionToken,
+  }
+}
+
+export async function verifyOtpCode(
+  payload: OtpVerifyRequestDto,
+  options: { sessionToken?: string; signal?: AbortSignal } = {},
+): Promise<{ data: OtpVerifyResponseDto; nextSessionToken: string | null }> {
+  const url = `${getPublicApiBaseUrl()}/otp/verify`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(options.sessionToken ? { 'X-Cart-Session': options.sessionToken } : {}),
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: options.signal ?? AbortSignal.timeout(12_000),
+  })
+
+  const nextSessionToken = res.headers.get('x-cart-session')
+  if (!res.ok) {
+    throw new ApiRequestError(
+      await readApiErrorMessage(res, `Unable to verify OTP (${res.status})`),
+      res.status,
+      url,
+    )
+  }
+
+  const json: unknown = await res.json()
+  return {
+    data: otpVerifyResponseSchema.parse(json),
+    nextSessionToken,
+  }
 }

@@ -13,13 +13,15 @@ import {
   PAYMENT_METHOD,
   type PaymentMethod,
 } from '@pressedoils/shared'
-import { AlertCircle, ArrowLeft, Clock, Lock, MapPin, Store, Tag } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Clock, Lock, MapPin, ShieldCheck, Store, Tag } from 'lucide-react'
 import {
   ApiRequestError,
   createCheckoutOrder,
   failCheckoutPayment,
   mockCompleteCheckoutPayment,
+  sendOtpCode,
   verifyCheckoutPayment,
+  verifyOtpCode,
 } from '@/lib/api'
 import { useCart } from '@/lib/cart'
 import { setLastConfirmedOrder } from '@/lib/checkout-handoff'
@@ -131,6 +133,17 @@ export function CheckoutClient() {
   const [showMockModal, setShowMockModal] = useState(false)
   const [countdownMs, setCountdownMs] = useState<number | null>(null)
 
+  const [otpChallengeId, setOtpChallengeId] = useState<string | null>(null)
+  const [otpMaskedPhone, setOtpMaskedPhone] = useState<string | null>(null)
+  const [otpCodeInput, setOtpCodeInput] = useState('')
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0)
+  const [otpCaptchaRequired, setOtpCaptchaRequired] = useState(false)
+  const [otpTurnstileToken, setOtpTurnstileToken] = useState('')
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState<string | null>(null)
+  const [otpBusy, setOtpBusy] = useState(false)
+  const [otpStatusMessage, setOtpStatusMessage] = useState<string | null>(null)
+  const [otpErrorMessage, setOtpErrorMessage] = useState<string | null>(null)
+
   const idempotencyKeyRef = useRef<string>(
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
@@ -208,6 +221,92 @@ export function CheckoutClient() {
       setPaymentMethod(PAYMENT_METHOD.ONLINE)
     }
   }, [codEligibility.allowed, paymentMethod])
+
+  useEffect(() => {
+    if (otpCooldownSeconds <= 0) return
+    const id = setInterval(() => {
+      setOtpCooldownSeconds((prev) => (prev > 1 ? prev - 1 : 0))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [otpCooldownSeconds])
+
+  function handlePhoneInputChange(nextPhone: string) {
+    setContactPhone(nextPhone)
+    // Verification token is strictly bound to verified mobile number
+    if (phoneVerificationToken || otpChallengeId) {
+      setPhoneVerificationToken(null)
+      setOtpChallengeId(null)
+      setOtpMaskedPhone(null)
+      setOtpCodeInput('')
+      setOtpStatusMessage(null)
+      setOtpErrorMessage(null)
+    }
+  }
+
+  async function handleSendCodOtp() {
+    if (otpBusy || otpCooldownSeconds > 0) return
+    setOtpErrorMessage(null)
+    setOtpStatusMessage(null)
+    setOtpBusy(true)
+    try {
+      const { data, nextSessionToken } = await sendOtpCode(
+        {
+          phone: contactPhone.trim(),
+          purpose: 'COD_CHECKOUT',
+          ...(otpTurnstileToken.trim() ? { turnstileToken: otpTurnstileToken.trim() } : {}),
+        },
+        { sessionToken: getSessionToken() },
+      )
+      if (nextSessionToken) {
+        setSessionToken(nextSessionToken)
+      }
+      setOtpChallengeId(data.challengeId)
+      setOtpMaskedPhone(data.maskedPhone)
+      setOtpCaptchaRequired(data.captchaRequired)
+      const cooldownSec = Math.max(
+        1,
+        Math.ceil((new Date(data.resendAvailableAt).getTime() - Date.now()) / 1000),
+      )
+      setOtpCooldownSeconds(cooldownSec)
+      setOtpStatusMessage(
+        `6-digit verification code sent to ${data.maskedPhone}. Valid for 5 minutes.`,
+      )
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.captchaRequired) {
+        setOtpCaptchaRequired(true)
+      }
+      setOtpErrorMessage(err instanceof Error ? err.message : 'Unable to send OTP right now.')
+    } finally {
+      setOtpBusy(false)
+    }
+  }
+
+  async function handleVerifyCodOtp() {
+    if (otpBusy || !otpChallengeId) return
+    setOtpErrorMessage(null)
+    setOtpStatusMessage(null)
+    setOtpBusy(true)
+    try {
+      const { data, nextSessionToken } = await verifyOtpCode(
+        {
+          challengeId: otpChallengeId,
+          phone: contactPhone.trim(),
+          code: otpCodeInput.trim(),
+          purpose: 'COD_CHECKOUT',
+        },
+        { sessionToken: getSessionToken() },
+      )
+      if (nextSessionToken) {
+        setSessionToken(nextSessionToken)
+      }
+      setPhoneVerificationToken(data.verificationToken)
+      setOtpStatusMessage('Mobile number verified for COD / Pay-at-Store checkout.')
+    } catch (err) {
+      setOtpErrorMessage(err instanceof Error ? err.message : 'OTP verification failed.')
+    } finally {
+      setOtpBusy(false)
+    }
+  }
 
   const appliedCodFeePaise =
     paymentMethod === PAYMENT_METHOD.COD &&
@@ -351,6 +450,13 @@ export function CheckoutClient() {
     if (submitting || verifyingPayment) return
     setErrorMessage(null)
 
+    if (paymentMethod === PAYMENT_METHOD.COD && !phoneVerificationToken) {
+      setErrorMessage(
+        'Please verify your mobile number via SMS OTP in step 3 before placing a COD / Pay-at-Store order.',
+      )
+      return
+    }
+
     const payloadCandidate = {
       contact: {
         name: contactName.trim(),
@@ -378,6 +484,9 @@ export function CheckoutClient() {
         qty: Math.min(i.qty, maxOrderQtyPerVariant),
       })),
       paymentMethod,
+      ...(paymentMethod === PAYMENT_METHOD.COD && phoneVerificationToken
+        ? { phoneVerificationToken }
+        : {}),
       ...(couponCode.trim() ? { couponCode: couponCode.trim().toUpperCase() } : {}),
       dpdpConsent,
       marketingConsent,
@@ -561,7 +670,7 @@ export function CheckoutClient() {
                   required
                   autoComplete="tel-national"
                   value={contactPhone}
-                  onChange={(e) => setContactPhone(e.target.value)}
+                  onChange={(e) => handlePhoneInputChange(e.target.value)}
                   placeholder="10-digit mobile (e.g. 9876543210)"
                   className="border-forest/30 bg-ivory text-forest placeholder:text-sage/70 focus-visible:border-forest min-h-11 w-full border px-3.5 font-mono text-sm"
                 />
@@ -850,12 +959,101 @@ export function CheckoutClient() {
                     <p className="text-sage text-xs">
                       {codEligibility.allowed
                         ? appliedCodFeePaise > 0
-                          ? `Includes ${formatPaiseToInr(appliedCodFeePaise)} COD handling fee.`
-                          : 'No extra COD fee. Confirmed immediately.'
+                          ? `Includes ${formatPaiseToInr(appliedCodFeePaise)} COD handling fee. SMS OTP required.`
+                          : 'No extra COD fee. Quick SMS OTP required.'
                         : codEligibility.reason}
                     </p>
                   </div>
                 </label>
+              ) : null}
+
+              {paymentMethod === PAYMENT_METHOD.COD && codEligibility.allowed ? (
+                <div className="border-forest/20 bg-champagne/40 space-y-3 border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-forest flex items-center gap-2 text-xs font-semibold tracking-[0.16em] uppercase">
+                      <ShieldCheck className="text-bronze size-4" aria-hidden />
+                      Verify mobile via SMS OTP
+                    </p>
+                    {phoneVerificationToken ? (
+                      <span className="text-success text-xs font-semibold">Verified ✓</span>
+                    ) : null}
+                  </div>
+
+                  {!phoneVerificationToken ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={otpBusy || otpCooldownSeconds > 0 || !contactPhone.trim()}
+                          onClick={() => void handleSendCodOtp()}
+                          className="border-forest text-forest hover:bg-forest hover:text-ivory min-h-11 border px-4 text-xs font-semibold tracking-[0.16em] uppercase transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          {otpCooldownSeconds > 0
+                            ? `Resend in ${otpCooldownSeconds}s`
+                            : otpChallengeId
+                              ? 'Resend OTP'
+                              : 'Send OTP'}
+                        </button>
+
+                        {otpChallengeId ? (
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={6}
+                              aria-label="6-digit SMS OTP"
+                              value={otpCodeInput}
+                              onChange={(e) =>
+                                setOtpCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))
+                              }
+                              placeholder="6-digit OTP"
+                              className="border-forest/30 bg-ivory text-forest min-h-11 w-32 border px-3 font-mono text-sm tracking-[0.2em]"
+                            />
+                            <button
+                              type="button"
+                              disabled={otpBusy || otpCodeInput.length !== 6}
+                              onClick={() => void handleVerifyCodOtp()}
+                              className="bg-forest text-ivory hover:bg-ink min-h-11 px-4 text-xs font-semibold tracking-[0.16em] uppercase transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                              Verify OTP
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {otpCaptchaRequired ? (
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="checkout-turnstile-token"
+                            className="text-sage block text-[11px] font-medium"
+                          >
+                            Security check token (Turnstile verification triggered)
+                          </label>
+                          <input
+                            id="checkout-turnstile-token"
+                            type="text"
+                            value={otpTurnstileToken}
+                            onChange={(e) => setOtpTurnstileToken(e.target.value)}
+                            placeholder="Complete CAPTCHA / paste verification token"
+                            className="border-forest/30 bg-ivory text-forest min-h-10 w-full border px-3 font-mono text-xs"
+                          />
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {otpStatusMessage ? (
+                    <p role="status" className="text-success text-xs">
+                      {otpStatusMessage}
+                      {otpMaskedPhone ? ` (${otpMaskedPhone})` : ''}
+                    </p>
+                  ) : null}
+                  {otpErrorMessage ? (
+                    <p role="alert" className="text-error text-xs">
+                      {otpErrorMessage}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </fieldset>

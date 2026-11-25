@@ -192,6 +192,7 @@ interface CartContextValue {
   codMaxOrderPaise: number | null
   legalPagesApproved: boolean
   dpdpPolicyVersion: string
+  smsOtpReady: boolean
   checkoutEnabled: boolean
   paymentGateway: 'razorpay' | 'mock'
   getSessionToken: () => string | undefined
@@ -713,6 +714,7 @@ export function CartProvider({
   const codMaxOrderPaise = initialSettings?.codMaxOrderPaise ?? null
   const legalPagesApproved = Boolean(initialSettings?.legalPagesApproved)
   const dpdpPolicyVersion = initialSettings?.dpdpPolicyVersion ?? '2026-11-draft-v1'
+  const smsOtpReady = Boolean(initialSettings?.smsOtpReady ?? true)
   const checkoutEnabled = initialSettings?.checkoutEnabled ?? true
   const paymentGateway = initialSettings?.paymentGateway ?? 'mock'
 
@@ -742,6 +744,7 @@ export function CartProvider({
       codMaxOrderPaise,
       legalPagesApproved,
       dpdpPolicyVersion,
+      smsOtpReady,
       checkoutEnabled,
       paymentGateway,
       getSessionToken,
@@ -795,6 +798,7 @@ export function CartProvider({
       runServerValidation,
       setQty,
       setSessionToken,
+      smsOtpReady,
       storePickupEnabled,
       subtotalPaise,
       validateError,

@@ -8,7 +8,7 @@ import {
   formatPaiseToInr,
   FULFILMENT_METHOD,
 } from '@pressedoils/shared'
-import { CheckCircle2, KeyRound, Store, Truck } from 'lucide-react'
+import { CheckCircle2, Store, Truck } from 'lucide-react'
 import { clearLastConfirmedOrder, getLastConfirmedOrder } from '@/lib/checkout-handoff'
 
 export function CheckoutSuccessClient() {
@@ -22,7 +22,7 @@ export function CheckoutSuccessClient() {
       setOrder(resolved)
     }
     return () => {
-      // Clear ephemeral receipt containing one-time pickup code when leaving confirmation view
+      // Clear ephemeral receipt when leaving confirmation view
       clearLastConfirmedOrder()
     }
   }, [orderNumberParam])
@@ -70,24 +70,8 @@ export function CheckoutSuccessClient() {
           </div>
         </div>
 
-        {order.fulfilmentMethod === FULFILMENT_METHOD.STORE_PICKUP && order.pickupCode ? (
-          <div className="border-gold/50 bg-champagne mt-6 border p-5">
-            <p className="text-bronze flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase">
-              <KeyRound className="size-4" aria-hidden />
-              Store pickup verification code
-            </p>
-            <p className="text-forest mt-2 font-mono text-3xl font-semibold tracking-[0.28em]">
-              {order.pickupCode}
-            </p>
-            <p className="text-sage mt-2 text-xs leading-relaxed">
-              Shown once for your security. Note it down and share it at the store counter along
-              with your phone number when collecting your bottles.
-            </p>
-          </div>
-        ) : null}
-
         {order.pickup ? (
-          <div className="border-forest/15 bg-champagne/35 mt-6 space-y-1.5 border p-4 text-xs">
+          <div className="border-forest/15 bg-champagne/35 mt-6 space-y-2 border p-4 text-xs">
             <p className="text-forest flex items-center gap-1.5 font-semibold">
               <Store className="size-4" aria-hidden />
               {order.pickup.location.name}
@@ -96,6 +80,9 @@ export function CheckoutSuccessClient() {
             <p className="text-sage">Hours: {order.pickup.location.hours}</p>
             <p className="text-success font-medium">
               Estimated ready: {order.pickup.estimatedReadyDisplay}
+            </p>
+            <p className="border-gold/40 bg-champagne/70 text-forest mt-2 border px-3 py-2 font-medium">
+              We&apos;ll send your pickup code by SMS and email when your order is ready.
             </p>
           </div>
         ) : (

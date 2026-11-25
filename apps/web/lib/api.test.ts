@@ -6,8 +6,10 @@ import {
   fetchLiveAvailability,
   fetchPublicProductBySlug,
   fetchPublicProducts,
+  sendOtpCode,
   validateCartOnServer,
   verifyCheckoutPayment,
+  verifyOtpCode,
 } from './api'
 import { canRenderDraftLegalCopy } from './legal'
 
@@ -256,6 +258,8 @@ describe('storefront API client', () => {
           legalPagesApproved: false,
           dpdpPolicyVersion: '2026-11-draft-v1',
           autoConfirmPaidOrders: true,
+          smsOtpReady: true,
+          turnstileSiteKey: null,
           checkoutEnabled: false,
           paymentGateway: 'razorpay',
           fssaiNumber: '123',
@@ -270,5 +274,50 @@ describe('storefront API client', () => {
     } finally {
       process.env.APP_ENV = prevAppEnv
     }
+  })
+
+  it('sends and verifies OTP tokens and surfaces Turnstile CAPTCHA flag cleanly', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            challengeId: '550e8400-e29b-41d4-a716-446655440888',
+            maskedPhone: '+91******3210',
+            expiresAt: '2026-11-25T14:00:00.000Z',
+            resendAvailableAt: '2026-11-25T13:55:45.000Z',
+            captchaRequired: false,
+          }),
+          { status: 200, headers: { 'x-cart-session': 'sess-otp.sig' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            verified: true,
+            verificationToken: 'ver_tok_1234567890abcdef',
+            expiresAt: '2026-11-25T14:15:00.000Z',
+          }),
+          { status: 200, headers: { 'x-cart-session': 'sess-otp.sig' } },
+        ),
+      )
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const sent = await sendOtpCode({ phone: '9876543210', purpose: 'COD_CHECKOUT' })
+    expect(sent.data.maskedPhone).toBe('+91******3210')
+    expect(sent.nextSessionToken).toBe('sess-otp.sig')
+
+    const verified = await verifyOtpCode(
+      {
+        challengeId: sent.data.challengeId,
+        phone: '9876543210',
+        code: '123456',
+        purpose: 'COD_CHECKOUT',
+      },
+      { sessionToken: sent.nextSessionToken ?? undefined },
+    )
+    expect(verified.data.verified).toBe(true)
+    expect(verified.data.verificationToken).toBe('ver_tok_1234567890abcdef')
   })
 })
