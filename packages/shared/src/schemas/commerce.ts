@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { CURRENCY, DEFAULT_MAX_QTY_PER_VARIANT } from '../constants'
-import { COUPON_TYPE, PAYMENT_METHOD } from '../enums'
+import { COUPON_TYPE, FULFILMENT_METHOD, PAYMENT_METHOD } from '../enums'
 import { indianPhoneSchema, indianPincodeSchema, paiseSchema } from './common'
 
 export function createCartItemInputSchema(maxQty: number = DEFAULT_MAX_QTY_PER_VARIANT) {
@@ -16,10 +16,22 @@ export const cartItemInputSchema = createCartItemInputSchema(DEFAULT_MAX_QTY_PER
 
 export type CartItemInput = z.infer<typeof cartItemInputSchema>
 
+export const cartValidateItemInputSchema = z
+  .object({
+    variantId: z.string().uuid(),
+    qty: z.number().int().min(1).max(1000),
+  })
+  .strict()
+
 export const cartValidateRequestSchema = z
   .object({
-    items: z.array(cartItemInputSchema).max(50),
+    items: z.array(cartValidateItemInputSchema).max(50),
     couponCode: z.string().trim().toUpperCase().max(32).optional(),
+    fulfilmentMethod: z
+      .enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP])
+      .default(FULFILMENT_METHOD.DELIVERY),
+    pincode: indianPincodeSchema.optional(),
+    pickupLocationId: z.string().uuid().optional(),
   })
   .strict()
 
@@ -47,6 +59,127 @@ export const pincodeLookupResponseSchema = z
   .strict()
 
 export type PincodeLookupResponseDto = z.infer<typeof pincodeLookupResponseSchema>
+
+export const pickupLocationPublicSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().min(1),
+    address: z.string().min(1),
+    hours: z.string().min(1),
+    prepTimeMinutes: z.number().int().positive(),
+    isSample: z.boolean(),
+  })
+  .strict()
+
+export type PickupLocationPublicDto = z.infer<typeof pickupLocationPublicSchema>
+
+export const cartItemStatusSchema = z.enum([
+  'OK',
+  'ADJUSTED_QTY',
+  'QUANTITY_UNAVAILABLE',
+  'OUT_OF_STOCK',
+  'UNAVAILABLE',
+])
+
+export type CartItemStatus = z.infer<typeof cartItemStatusSchema>
+
+export const cartValidatedLineSchema = z
+  .object({
+    variantId: z.string().uuid(),
+    productId: z.string().uuid(),
+    productSlug: z.string(),
+    productName: z.string(),
+    sizeLabel: z.string(),
+    sku: z.string(),
+    imageUrl: z.string().nullable(),
+    imageAlt: z.string(),
+    requestedQty: z.number().int().positive(),
+    effectiveQty: z.number().int().nonnegative(),
+    unitPricePaise: paiseSchema,
+    mrpPaise: paiseSchema.nullable(),
+    lineSubtotalPaise: paiseSchema,
+    lineDiscountPaise: paiseSchema,
+    lineNetPaise: paiseSchema,
+    inStock: z.boolean(),
+    lowStock: z.boolean(),
+    availableStock: z.number().int().positive().optional(),
+    status: cartItemStatusSchema,
+    statusMessage: z.string().nullable(),
+  })
+  .strict()
+
+export type CartValidatedLineDto = z.infer<typeof cartValidatedLineSchema>
+
+export const cartCouponResultSchema = z
+  .object({
+    applied: z.boolean(),
+    code: z.string(),
+    discountPaise: paiseSchema,
+    message: z.string(),
+  })
+  .strict()
+
+export type CartCouponResultDto = z.infer<typeof cartCouponResultSchema>
+
+export const cartTaxBreakdownSchema = z.discriminatedUnion('showTaxBreakdown', [
+  z
+    .object({
+      showTaxBreakdown: z.literal(true),
+      rateBps: z.number().int().min(0).max(2800),
+      includedInPrice: z.boolean(),
+      taxPaise: paiseSchema,
+    })
+    .strict(),
+  z
+    .object({
+      showTaxBreakdown: z.literal(false),
+    })
+    .strict(),
+])
+
+export type CartTaxBreakdownDto = z.infer<typeof cartTaxBreakdownSchema>
+
+export const cartValidateResponseSchema = z
+  .object({
+    items: z.array(cartValidatedLineSchema),
+    fulfilmentMethod: z.enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP]),
+    pickup: z
+      .object({
+        location: pickupLocationPublicSchema,
+        estimatedReadyDisplay: z.string(),
+      })
+      .strict()
+      .nullable(),
+    pincode: pincodeLookupResponseSchema.nullable(),
+    coupon: cartCouponResultSchema.nullable(),
+    freeShipping: z
+      .object({
+        enabled: z.literal(true),
+        qualified: z.boolean(),
+        thresholdPaise: paiseSchema,
+        remainingPaise: paiseSchema,
+      })
+      .strict()
+      .nullable(),
+    tax: cartTaxBreakdownSchema,
+    summary: z
+      .object({
+        itemsSubtotalPaise: paiseSchema,
+        discountPaise: paiseSchema,
+        netItemsTotalPaise: paiseSchema,
+        shippingPaise: paiseSchema.nullable(),
+        shippingStatus: z.enum(['CALCULATED', 'ENTER_PINCODE', 'UNSERVICEABLE', 'PICKUP_FREE']),
+        taxAddedPaise: paiseSchema,
+        totalPaise: paiseSchema,
+        totalLabel: z.enum(['Items total', 'Total']),
+        canCheckout: z.boolean(),
+      })
+      .strict(),
+    maxOrderQtyPerVariant: z.number().int().positive(),
+  })
+  .strict()
+
+export type CartValidateResponseDto = z.infer<typeof cartValidateResponseSchema>
 
 export const addressInputSchema = z
   .object({
@@ -95,6 +228,7 @@ export const couponSchema = z
     type: z.enum([COUPON_TYPE.PERCENT, COUPON_TYPE.FLAT]),
     value: z.number().int().positive(),
     minOrderPaise: paiseSchema,
+    maxDiscountPaise: z.number().int().positive().nullable().optional(),
     isActive: z.boolean(),
   })
   .strict()
@@ -110,14 +244,52 @@ export const trackOrderQuerySchema = z
 
 export type TrackOrderQuery = z.infer<typeof trackOrderQuerySchema>
 
+export const ownerUpdateSettingsSchema = z
+  .object({
+    freeShipping: z
+      .object({
+        enabled: z.boolean(),
+        thresholdPaise: paiseSchema.optional(),
+        startsAt: z.string().datetime().nullable().optional(),
+        endsAt: z.string().datetime().nullable().optional(),
+      })
+      .strict()
+      .optional(),
+    storePickup: z
+      .object({
+        enabled: z.boolean(),
+        payAtStoreEnabled: z.boolean().optional(),
+        holdWindowDays: z.number().int().min(1).max(14).optional(),
+      })
+      .strict()
+      .optional(),
+    taxDisplay: z
+      .object({
+        showTaxBreakdown: z.boolean(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (v) => Boolean(v.freeShipping || v.storePickup || v.taxDisplay),
+    'At least one setting group must be provided',
+  )
+
+export type OwnerUpdateSettingsDto = z.infer<typeof ownerUpdateSettingsSchema>
+
 export const publicSettingsResponseSchema = z
   .object({
     brandName: z.string().min(1),
     currency: z.literal(CURRENCY),
-    freeShippingThresholdPaise: paiseSchema,
+    freeShippingEnabled: z.boolean(),
+    freeShippingThresholdPaise: paiseSchema.nullable(),
     defaultShippingPaise: paiseSchema,
     gstRateBps: z.number().int().min(0).max(2800),
     gstIncludedInPrice: z.boolean(),
+    showTaxBreakdown: z.boolean(),
+    storePickupEnabled: z.boolean(),
+    pickupLocations: z.array(pickupLocationPublicSchema),
     fssaiNumber: z.string().min(1),
     supportEmail: z.string().min(1),
     supportPhone: z.string().min(1),

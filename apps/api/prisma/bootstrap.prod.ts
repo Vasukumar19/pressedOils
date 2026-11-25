@@ -30,10 +30,28 @@ async function bootstrapProd() {
 
     const defaultSettings: Array<{ key: string; value: object }> = [
       { key: SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE, value: { amountPaise: 99900 } },
+      {
+        key: SETTING_KEYS.FREE_SHIPPING_CONFIG,
+        value: { enabled: false, thresholdPaise: 99900, startsAt: null, endsAt: null },
+      },
       { key: SETTING_KEYS.DEFAULT_SHIPPING_PAISE, value: { amountPaise: 7000 } },
       {
         key: SETTING_KEYS.GST_CONFIG,
-        value: { rateBps: 500, includedInPrice: true, hsnCode: 'TODO(owner)' },
+        value: {
+          rateBps: 500,
+          includedInPrice: true,
+          hsnCode: 'TODO(owner)',
+          shippingTaxRateBps: null,
+          isSample: false,
+        },
+      },
+      {
+        key: SETTING_KEYS.TAX_DISPLAY_CONFIG,
+        value: { showTaxBreakdown: false },
+      },
+      {
+        key: SETTING_KEYS.STORE_PICKUP_CONFIG,
+        value: { enabled: false, payAtStoreEnabled: false, holdWindowDays: 3 },
       },
       {
         key: SETTING_KEYS.STORE_INFO,

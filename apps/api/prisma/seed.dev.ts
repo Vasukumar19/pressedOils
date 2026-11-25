@@ -239,10 +239,28 @@ async function seedDev() {
 
     const defaultSettings: Array<{ key: string; value: object }> = [
       { key: SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE, value: { amountPaise: 99900 } },
+      {
+        key: SETTING_KEYS.FREE_SHIPPING_CONFIG,
+        value: { enabled: false, thresholdPaise: 99900, startsAt: null, endsAt: null },
+      },
       { key: SETTING_KEYS.DEFAULT_SHIPPING_PAISE, value: { amountPaise: 7000 } },
       {
         key: SETTING_KEYS.GST_CONFIG,
-        value: { rateBps: 500, includedInPrice: true, hsnCode: '15089091' },
+        value: {
+          rateBps: 500,
+          includedInPrice: true,
+          hsnCode: '15089091',
+          shippingTaxRateBps: null,
+          isSample: true,
+        },
+      },
+      {
+        key: SETTING_KEYS.TAX_DISPLAY_CONFIG,
+        value: { showTaxBreakdown: false },
+      },
+      {
+        key: SETTING_KEYS.STORE_PICKUP_CONFIG,
+        value: { enabled: true, payAtStoreEnabled: false, holdWindowDays: 3 },
       },
       {
         key: SETTING_KEYS.STORE_INFO,
@@ -336,6 +354,34 @@ async function seedDev() {
         is_active: true,
       },
     })
+
+    const existingSamplePickup = await prisma.pickupLocation.findFirst({
+      where: { is_sample: true },
+    })
+    if (existingSamplePickup) {
+      await prisma.pickupLocation.update({
+        where: { id: existingSamplePickup.id },
+        data: {
+          name: 'SAMPLE STORE (Not a real pickup address)',
+          address: 'SAMPLE: 00 Press Mill Lane, Placeholder Nagar, Chennai 600001',
+          hours: 'Mon–Sat 10:00 AM – 7:00 PM IST (Sample)',
+          prep_time_minutes: 120,
+          is_active: true,
+          is_sample: true,
+        },
+      })
+    } else {
+      await prisma.pickupLocation.create({
+        data: {
+          name: 'SAMPLE STORE (Not a real pickup address)',
+          address: 'SAMPLE: 00 Press Mill Lane, Placeholder Nagar, Chennai 600001',
+          hours: 'Mon–Sat 10:00 AM – 7:00 PM IST (Sample)',
+          prep_time_minutes: 120,
+          is_active: true,
+          is_sample: true,
+        },
+      })
+    }
 
     console.log('✅  seed:dev completed (6 placeholder products, 18 variants, 6 batches)')
   } finally {

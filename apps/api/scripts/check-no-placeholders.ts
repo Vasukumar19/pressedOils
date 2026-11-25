@@ -66,6 +66,13 @@ async function checkNoPlaceholders() {
       }
     }
 
+    const samplePickups = await prisma.pickupLocation.findMany({
+      where: { is_sample: true },
+    })
+    for (const loc of samplePickups) {
+      failures.push(`Sample pickup location exists in database: "${loc.name}" (${loc.id})`)
+    }
+
     if (failures.length > 0) {
       console.error('❌  Production placeholder / readiness check failed:')
       for (const f of failures) console.error(`  - ${f}`)

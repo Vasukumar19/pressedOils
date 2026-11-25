@@ -11,10 +11,20 @@ export const PLACEHOLDER_PATH_PREFIX = '/placeholders/' as const
 
 export const SETTING_KEYS = {
   FREE_SHIPPING_THRESHOLD_PAISE: 'free_shipping_threshold_paise',
+  FREE_SHIPPING_CONFIG: 'free_shipping_config',
   DEFAULT_SHIPPING_PAISE: 'default_shipping_paise',
   GST_CONFIG: 'gst_config',
+  TAX_DISPLAY_CONFIG: 'tax_display_config',
+  STORE_PICKUP_CONFIG: 'store_pickup_config',
   STORE_INFO: 'store_info',
   REQUIRE_LAB_REPORT_FOR_ACTIVATION: 'require_lab_report_for_activation',
+} as const
+
+export const CART_RATE_LIMITS = {
+  SESSION_PER_MIN: 60,
+  IP_PER_MIN: 300,
+  INVALID_COUPON_LIMIT: 10,
+  INVALID_COUPON_WINDOW_SECONDS: 15 * 60,
 } as const
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS]

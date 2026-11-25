@@ -15,8 +15,15 @@ enum OrderStatus {
   PACKED
   SHIPPED
   DELIVERED
+  READY_FOR_PICKUP
+  PICKED_UP
   CANCELLED
   REFUNDED
+}
+
+enum FulfilmentMethod {
+  DELIVERY
+  STORE_PICKUP
 }
 
 enum PaymentMethod {
@@ -55,6 +62,7 @@ model Product {
   description   String
   best_for      String
   origin_region String
+  hsn_code      String?
   is_active     Boolean        @default(false)
   sort_order    Int            @default(0)
   brand         String         @default("[YOUR BRAND]")
@@ -163,32 +171,55 @@ model Address {
   @@map("addresses")
 }
 
+model PickupLocation {
+  id                String   @id @default(uuid())
+  name              String
+  address           String
+  hours             String
+  prep_time_minutes Int      @default(120)
+  is_active         Boolean  @default(true)
+  is_sample         Boolean  @default(false)
+  created_at        DateTime @default(now()) @db.Timestamptz(3)
+  updated_at        DateTime @updatedAt @db.Timestamptz(3)
+  orders            Order[]
+
+  @@index([is_active, is_sample])
+  @@map("pickup_locations")
+}
+
 model Order {
-  id               String          @id @default(uuid())
-  order_number     String          @unique
-  customer_id      String
-  address_snapshot Json
-  subtotal_paise   Int
-  shipping_paise   Int
-  discount_paise   Int             @default(0)
-  tax_paise        Int             @default(0)
-  total_paise      Int
-  coupon_code      String?
-  payment_method   PaymentMethod
-  payment_status   PaymentStatus   @default(PENDING)
-  order_status     OrderStatus     @default(PENDING_PAYMENT)
-  tracking_url     String?
-  created_at       DateTime        @default(now()) @db.Timestamptz(3)
-  updated_at       DateTime        @updatedAt @db.Timestamptz(3)
-  customer         Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict)
-  items            OrderItem[]
-  events           OrderEvent[]
-  payments         Payment[]
-  stock_movements  StockMovement[]
-  reservations     Reservation[]
+  id                 String           @id @default(uuid())
+  order_number       String           @unique
+  customer_id        String
+  address_snapshot   Json
+  subtotal_paise     Int
+  shipping_paise     Int
+  discount_paise     Int              @default(0)
+  tax_paise          Int              @default(0)
+  total_paise        Int
+  coupon_code        String?
+  fulfilment_method  FulfilmentMethod @default(DELIVERY)
+  pickup_location_id String?
+  pickup_code_hash   String?
+  pickup_ready_at    DateTime?        @db.Timestamptz(3)
+  picked_up_at       DateTime?        @db.Timestamptz(3)
+  payment_method     PaymentMethod
+  payment_status     PaymentStatus    @default(PENDING)
+  order_status       OrderStatus      @default(PENDING_PAYMENT)
+  tracking_url       String?
+  created_at         DateTime         @default(now()) @db.Timestamptz(3)
+  updated_at         DateTime         @updatedAt @db.Timestamptz(3)
+  customer           Customer         @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  pickup_location    PickupLocation?  @relation(fields: [pickup_location_id], references: [id], onDelete: Restrict)
+  items              OrderItem[]
+  events             OrderEvent[]
+  payments           Payment[]
+  stock_movements    StockMovement[]
+  reservations       Reservation[]
 
   @@index([customer_id, created_at])
   @@index([order_status, created_at])
+  @@index([pickup_location_id])
   @@map("orders")
 }
 
@@ -275,17 +306,18 @@ model Reservation {
 }
 
 model Coupon {
-  id              String     @id @default(uuid())
-  code            String     @unique
-  type            CouponType
-  value           Int
-  min_order_paise Int        @default(0)
-  expires_at      DateTime?  @db.Timestamptz(3)
-  usage_limit     Int?
-  used_count      Int        @default(0)
-  is_active       Boolean    @default(true)
-  created_at      DateTime   @default(now()) @db.Timestamptz(3)
-  updated_at      DateTime   @updatedAt @db.Timestamptz(3)
+  id                 String     @id @default(uuid())
+  code               String     @unique
+  type               CouponType
+  value              Int
+  min_order_paise    Int        @default(0)
+  max_discount_paise Int?
+  expires_at         DateTime?  @db.Timestamptz(3)
+  usage_limit        Int?
+  used_count         Int        @default(0)
+  is_active          Boolean    @default(true)
+  created_at         DateTime   @default(now()) @db.Timestamptz(3)
+  updated_at         DateTime   @updatedAt @db.Timestamptz(3)
 
   @@map("coupons")
 }

@@ -7,6 +7,7 @@
 
 export * from './enums'
 export * from './constants'
+export * from './cart-pricing'
 export * from './schemas/common'
 export * from './schemas/catalog'
 export * from './schemas/commerce'
