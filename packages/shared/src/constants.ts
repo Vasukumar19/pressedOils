@@ -1,10 +1,19 @@
 export const CURRENCY = 'INR' as const
 export const RESERVATION_TTL_MINUTES = 15 as const
+export const RESERVATION_GRACE_MINUTES = 2 as const
+export const IDEMPOTENCY_TTL_HOURS = 24 as const
+export const PICKUP_CODE_MAX_ATTEMPTS = 5 as const
 export const DEFAULT_MAX_QTY_PER_VARIANT = 10 as const
 export const DEFAULT_PAGE_SIZE = 12 as const
 export const MAX_PAGE_SIZE = 24 as const
 export const SIZE_LABELS = ['500 ml', '1 L', '5 L'] as const
 export type SizeLabel = (typeof SIZE_LABELS)[number]
+
+/**
+ * 32-character unambiguous uppercase alphabet for customer order numbers
+ * (excludes lookalike characters 0, O, 1, I).
+ */
+export const ORDER_NUMBER_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ' as const
 
 export const INDIA_TIMEZONE = 'Asia/Kolkata' as const
 export const PLACEHOLDER_PATH_PREFIX = '/placeholders/' as const
@@ -16,6 +25,8 @@ export const SETTING_KEYS = {
   GST_CONFIG: 'gst_config',
   TAX_DISPLAY_CONFIG: 'tax_display_config',
   STORE_PICKUP_CONFIG: 'store_pickup_config',
+  COD_CONFIG: 'cod_config',
+  LEGAL_PAGES_CONFIG: 'legal_pages_config',
   STORE_INFO: 'store_info',
   REQUIRE_LAB_REPORT_FOR_ACTIVATION: 'require_lab_report_for_activation',
 } as const
@@ -25,6 +36,12 @@ export const CART_RATE_LIMITS = {
   IP_PER_MIN: 300,
   INVALID_COUPON_LIMIT: 10,
   INVALID_COUPON_WINDOW_SECONDS: 15 * 60,
+} as const
+
+export const CHECKOUT_RATE_LIMITS = {
+  SESSION_PER_MIN: 12,
+  IP_PER_MIN: 30,
+  VERIFY_PER_MIN: 20,
 } as const
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS]
@@ -128,4 +145,18 @@ export function formatDateIndia(value: Date | string): string {
     month: 'short',
     year: 'numeric',
   }).format(date)
+}
+
+/** Returns YYMMDD formatted in Asia/Kolkata (IST) for customer-facing order numbers. */
+export function getIndiaDateYYMMDD(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: INDIA_TIMEZONE,
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const yy = parts.find((p) => p.type === 'year')?.value ?? '00'
+  const mm = parts.find((p) => p.type === 'month')?.value ?? '01'
+  const dd = parts.find((p) => p.type === 'day')?.value ?? '01'
+  return `${yy}${mm}${dd}`
 }

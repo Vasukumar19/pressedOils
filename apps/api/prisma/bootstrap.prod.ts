@@ -54,6 +54,24 @@ async function bootstrapProd() {
         value: { enabled: false, payAtStoreEnabled: false, holdWindowDays: 3 },
       },
       {
+        key: SETTING_KEYS.COD_CONFIG,
+        value: {
+          enabled: false,
+          feePaise: 0,
+          maxOrderPaise: 500000,
+          maxActiveOrdersPerPhone: 2,
+        },
+      },
+      {
+        key: SETTING_KEYS.LEGAL_PAGES_CONFIG,
+        value: {
+          approved: false,
+          privacyVersion: '2026-11-draft-v1',
+          termsVersion: '2026-11-draft-v1',
+          shippingPolicyVersion: '2026-11-draft-v1',
+        },
+      },
+      {
         key: SETTING_KEYS.STORE_INFO,
         value: {
           brandName: '[YOUR BRAND]',

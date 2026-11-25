@@ -188,38 +188,48 @@ model PickupLocation {
 }
 
 model Order {
-  id                 String           @id @default(uuid())
-  order_number       String           @unique
-  customer_id        String
-  address_snapshot   Json
-  subtotal_paise     Int
-  shipping_paise     Int
-  discount_paise     Int              @default(0)
-  tax_paise          Int              @default(0)
-  total_paise        Int
-  coupon_code        String?
-  fulfilment_method  FulfilmentMethod @default(DELIVERY)
-  pickup_location_id String?
-  pickup_code_hash   String?
-  pickup_ready_at    DateTime?        @db.Timestamptz(3)
-  picked_up_at       DateTime?        @db.Timestamptz(3)
-  payment_method     PaymentMethod
-  payment_status     PaymentStatus    @default(PENDING)
-  order_status       OrderStatus      @default(PENDING_PAYMENT)
-  tracking_url       String?
-  created_at         DateTime         @default(now()) @db.Timestamptz(3)
-  updated_at         DateTime         @updatedAt @db.Timestamptz(3)
-  customer           Customer         @relation(fields: [customer_id], references: [id], onDelete: Restrict)
-  pickup_location    PickupLocation?  @relation(fields: [pickup_location_id], references: [id], onDelete: Restrict)
-  items              OrderItem[]
-  events             OrderEvent[]
-  payments           Payment[]
-  stock_movements    StockMovement[]
-  reservations       Reservation[]
+  id                       String                   @id @default(uuid())
+  order_number             String                   @unique
+  customer_id              String
+  address_snapshot         Json
+  subtotal_paise           Int
+  shipping_paise           Int
+  cod_fee_paise            Int                      @default(0)
+  discount_paise           Int                      @default(0)
+  tax_paise                Int                      @default(0)
+  total_paise              Int
+  coupon_code              String?
+  fulfilment_method        FulfilmentMethod         @default(DELIVERY)
+  pickup_location_id       String?
+  pickup_code_hash         String?
+  pickup_code_attempts     Int                      @default(0)
+  pickup_code_locked_until DateTime?                @db.Timestamptz(3)
+  pickup_ready_at          DateTime?                @db.Timestamptz(3)
+  picked_up_at             DateTime?                @db.Timestamptz(3)
+  dpdp_consent_at          DateTime?                @db.Timestamptz(3)
+  dpdp_policy_version      String?
+  marketing_consent        Boolean                  @default(false)
+  needs_attention          Boolean                  @default(false)
+  payment_method           PaymentMethod
+  payment_status           PaymentStatus            @default(PENDING)
+  order_status             OrderStatus              @default(PENDING_PAYMENT)
+  tracking_url             String?
+  created_at               DateTime                 @default(now()) @db.Timestamptz(3)
+  updated_at               DateTime                 @updatedAt @db.Timestamptz(3)
+  customer                 Customer                 @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  pickup_location          PickupLocation?          @relation(fields: [pickup_location_id], references: [id], onDelete: Restrict)
+  items                    OrderItem[]
+  events                   OrderEvent[]
+  payments                 Payment[]
+  stock_movements          StockMovement[]
+  reservations             Reservation[]
+  idempotency_keys         CheckoutIdempotencyKey[]
 
   @@index([customer_id, created_at])
   @@index([order_status, created_at])
   @@index([pickup_location_id])
+  @@index([needs_attention, created_at])
+  @@index([payment_method, order_status, created_at])
   @@map("orders")
 }
 
@@ -232,6 +242,7 @@ model OrderItem {
   size_snapshot         String
   qty                   Int
   unit_price_paise      Int
+  discount_paise        Int     @default(0)
   order                 Order   @relation(fields: [order_id], references: [id], onDelete: Cascade)
   variant               Variant @relation(fields: [variant_id], references: [id], onDelete: Restrict)
   batch                 Batch?  @relation(fields: [batch_id], references: [id], onDelete: Restrict)
@@ -303,6 +314,20 @@ model Reservation {
   @@index([status, expires_at])
   @@index([order_id])
   @@map("reservations")
+}
+
+model CheckoutIdempotencyKey {
+  key           String   @id
+  request_hash  String
+  order_id      String?
+  status_code   Int
+  response_json Json
+  expires_at    DateTime @db.Timestamptz(3)
+  created_at    DateTime @default(now()) @db.Timestamptz(3)
+  order         Order?   @relation(fields: [order_id], references: [id], onDelete: SetNull)
+
+  @@index([expires_at])
+  @@map("checkout_idempotency_keys")
 }
 
 model Coupon {

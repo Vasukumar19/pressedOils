@@ -204,17 +204,163 @@ export const checkoutRequestSchema = z
         email: z.string().trim().email().max(160).optional(),
       })
       .strict(),
-    address: addressInputSchema,
+    fulfilmentMethod: z
+      .enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP])
+      .default(FULFILMENT_METHOD.DELIVERY),
+    address: addressInputSchema.optional(),
+    pickupLocationId: z.string().uuid().optional(),
     items: z.array(cartItemInputSchema).min(1).max(50),
     paymentMethod: z.enum([PAYMENT_METHOD.ONLINE, PAYMENT_METHOD.COD]),
     couponCode: z.string().trim().toUpperCase().max(32).optional(),
     dpdpConsent: z.literal(true, {
       errorMap: () => ({ message: 'Privacy policy consent is required to place an order' }),
     }),
+    marketingConsent: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.fulfilmentMethod === FULFILMENT_METHOD.DELIVERY && !data.address) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['address'],
+        message: 'Delivery address is required for home delivery orders',
+      })
+    }
+  })
+
+export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>
+
+export const checkoutVerifyRequestSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    razorpayOrderId: z.string().trim().min(1).max(100),
+    razorpayPaymentId: z.string().trim().min(1).max(100),
+    razorpaySignature: z.string().trim().min(1).max(256),
   })
   .strict()
 
-export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>
+export type CheckoutVerifyRequest = z.infer<typeof checkoutVerifyRequestSchema>
+
+export const checkoutFailRequestSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    reason: z.enum(['PAYMENT_FAILED', 'MODAL_DISMISSED', 'CANCELLED']).default('PAYMENT_FAILED'),
+    errorDescription: z.string().trim().max(300).optional(),
+  })
+  .strict()
+
+export type CheckoutFailRequest = z.infer<typeof checkoutFailRequestSchema>
+
+export const checkoutOrderItemSummarySchema = z
+  .object({
+    variantId: z.string().uuid(),
+    productName: z.string(),
+    sizeLabel: z.string(),
+    qty: z.number().int().positive(),
+    unitPricePaise: paiseSchema,
+    discountPaise: paiseSchema,
+    lineTotalPaise: paiseSchema,
+  })
+  .strict()
+
+export const checkoutOrderSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    orderNumber: z.string().regex(/^ORD-\d{6}-[2-9A-HJ-NP-Z]{5}$/),
+    fulfilmentMethod: z.enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP]),
+    paymentMethod: z.enum([PAYMENT_METHOD.ONLINE, PAYMENT_METHOD.COD]),
+    paymentStatus: z.enum(['PENDING', 'CAPTURED', 'FAILED', 'REFUNDED']),
+    orderStatus: z.enum([
+      'PENDING_PAYMENT',
+      'COD_PENDING',
+      'PAID',
+      'CONFIRMED',
+      'PACKED',
+      'SHIPPED',
+      'DELIVERED',
+      'READY_FOR_PICKUP',
+      'PICKED_UP',
+      'CANCELLED',
+      'REFUNDED',
+    ]),
+    itemsSubtotalPaise: paiseSchema,
+    discountPaise: paiseSchema,
+    netItemsTotalPaise: paiseSchema,
+    shippingPaise: paiseSchema,
+    codFeePaise: paiseSchema,
+    taxAddedPaise: paiseSchema,
+    totalPaise: paiseSchema,
+    tax: cartTaxBreakdownSchema,
+    couponCode: z.string().nullable(),
+    pickup: z
+      .object({
+        location: pickupLocationPublicSchema,
+        estimatedReadyDisplay: z.string(),
+      })
+      .strict()
+      .nullable(),
+    pickupCode: z.string().nullable(),
+    reservationExpiresAt: z.string().nullable(),
+    needsAttention: z.boolean(),
+    dpdpPolicyVersion: z.string().nullable(),
+    marketingConsent: z.boolean(),
+    createdAt: z.string(),
+    items: z.array(checkoutOrderItemSummarySchema),
+  })
+  .strict()
+
+export type CheckoutOrderSummaryDto = z.infer<typeof checkoutOrderSummarySchema>
+
+export const checkoutPaymentSessionSchema = z
+  .object({
+    gateway: z.enum(['razorpay', 'mock']),
+    keyId: z.string(),
+    gatewayOrderId: z.string(),
+    amountPaise: paiseSchema,
+    currency: z.literal(CURRENCY),
+    brandName: z.string(),
+    prefill: z
+      .object({
+        name: z.string(),
+        contact: z.string(),
+        email: z.string().optional(),
+      })
+      .strict(),
+    reservationExpiresAt: z.string(),
+  })
+  .strict()
+
+export const checkoutResponseSchema = z
+  .object({
+    order: checkoutOrderSummarySchema,
+    payment: checkoutPaymentSessionSchema.nullable(),
+  })
+  .strict()
+
+export type CheckoutResponseDto = z.infer<typeof checkoutResponseSchema>
+
+export const checkoutVerifyResponseSchema = z
+  .object({
+    order: checkoutOrderSummarySchema,
+    alreadyProcessed: z.boolean(),
+    autoRefunded: z.boolean(),
+    message: z.string(),
+  })
+  .strict()
+
+export type CheckoutVerifyResponseDto = z.infer<typeof checkoutVerifyResponseSchema>
+
+export const checkoutFailResponseSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    orderNumber: z.string(),
+    orderStatus: z.enum(['CANCELLED', 'PAID', 'COD_PENDING']),
+    released: z.boolean(),
+    message: z.string(),
+  })
+  .strict()
+
+export type CheckoutFailResponseDto = z.infer<typeof checkoutFailResponseSchema>
 
 export const couponSchema = z
   .object({
@@ -269,10 +415,28 @@ export const ownerUpdateSettingsSchema = z
       })
       .strict()
       .optional(),
+    cod: z
+      .object({
+        enabled: z.boolean(),
+        feePaise: paiseSchema.optional(),
+        maxOrderPaise: paiseSchema.optional(),
+        maxActiveOrdersPerPhone: z.number().int().min(1).max(20).optional(),
+      })
+      .strict()
+      .optional(),
+    legalPages: z
+      .object({
+        approved: z.boolean(),
+        privacyVersion: z.string().trim().min(1).max(40).optional(),
+        termsVersion: z.string().trim().min(1).max(40).optional(),
+        shippingPolicyVersion: z.string().trim().min(1).max(40).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine(
-    (v) => Boolean(v.freeShipping || v.storePickup || v.taxDisplay),
+    (v) => Boolean(v.freeShipping || v.storePickup || v.taxDisplay || v.cod || v.legalPages),
     'At least one setting group must be provided',
   )
 
@@ -289,7 +453,15 @@ export const publicSettingsResponseSchema = z
     gstIncludedInPrice: z.boolean(),
     showTaxBreakdown: z.boolean(),
     storePickupEnabled: z.boolean(),
+    payAtStoreEnabled: z.boolean(),
     pickupLocations: z.array(pickupLocationPublicSchema),
+    codEnabled: z.boolean(),
+    codFeePaise: paiseSchema,
+    codMaxOrderPaise: paiseSchema.nullable(),
+    legalPagesApproved: z.boolean(),
+    dpdpPolicyVersion: z.string().min(1),
+    checkoutEnabled: z.boolean(),
+    paymentGateway: z.enum(['razorpay', 'mock']),
     fssaiNumber: z.string().min(1),
     supportEmail: z.string().min(1),
     supportPhone: z.string().min(1),

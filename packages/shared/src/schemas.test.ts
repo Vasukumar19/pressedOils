@@ -6,10 +6,12 @@ import {
   computePublicAvailability,
   formatDateIndia,
   formatPaiseToInr,
+  getIndiaDateYYMMDD,
   indianPhoneSchema,
   indianPincodeSchema,
   isPlaceholderUrl,
   isTrustedLabReportUrl,
+  ORDER_NUMBER_ALPHABET,
   ORDER_STATUS,
   paiseSchema,
   pincodeLookupResponseSchema,
@@ -273,6 +275,25 @@ describe('order status transitions and checkout validation', () => {
       dpdpConsent: true,
     }
     expect(checkoutRequestSchema.parse(base).contact.phone).toBe('+919876543210')
+    expect(checkoutRequestSchema.parse(base).marketingConsent).toBe(false)
+    expect(
+      checkoutRequestSchema.parse({
+        contact: { name: 'Asha', phone: '9876543210' },
+        fulfilmentMethod: 'STORE_PICKUP',
+        items: [{ variantId: '550e8400-e29b-41d4-a716-446655440000', qty: 1 }],
+        paymentMethod: 'ONLINE',
+        dpdpConsent: true,
+      }).fulfilmentMethod,
+    ).toBe('STORE_PICKUP')
+    expect(() =>
+      checkoutRequestSchema.parse({
+        contact: { name: 'Asha', phone: '9876543210' },
+        fulfilmentMethod: 'DELIVERY',
+        items: [{ variantId: '550e8400-e29b-41d4-a716-446655440000', qty: 1 }],
+        paymentMethod: 'ONLINE',
+        dpdpConsent: true,
+      }),
+    ).toThrow()
     expect(() => checkoutRequestSchema.parse({ ...base, dpdpConsent: false })).toThrow()
     expect(() =>
       checkoutRequestSchema.parse({
@@ -280,5 +301,12 @@ describe('order status transitions and checkout validation', () => {
         items: [{ variantId: '550e8400-e29b-41d4-a716-446655440000', qty: 11 }],
       }),
     ).toThrow()
+  })
+
+  it('uses an unambiguous 32-char order number alphabet without 0/O/1/I and formats YYMMDD in IST', () => {
+    expect(ORDER_NUMBER_ALPHABET).toHaveLength(32)
+    expect(ORDER_NUMBER_ALPHABET).not.toMatch(/[01IO]/)
+    // 20:00 UTC on Nov 25 is 01:30 IST on Nov 26
+    expect(getIndiaDateYYMMDD(new Date('2026-11-25T20:00:00.000Z'))).toBe('261126')
   })
 })
