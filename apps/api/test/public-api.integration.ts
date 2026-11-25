@@ -662,9 +662,15 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
 
     expect(verifyRes1.headers['cache-control']).toBe('no-store')
     const verified1 = checkoutVerifyResponseSchema.parse(verifyRes1.body)
-    expect(verified1.order.orderStatus).toBe('PAID')
+    expect(verified1.order.orderStatus).toBe('CONFIRMED')
     expect(verified1.alreadyProcessed).toBe(false)
     expect(verified1.order.pickupCode).toMatch(/^\d{6}$/)
+    const pickupEvents = await prisma.orderEvent.findMany({
+      where: { order_id: pickupInit.order.id },
+      orderBy: { created_at: 'asc' },
+    })
+    expect(pickupEvents.map((e) => e.status)).toContain('PAID')
+    expect(pickupEvents.map((e) => e.status)).toContain('CONFIRMED')
     const v500AfterPaid = await prisma.variant.findUniqueOrThrow({ where: { id: variant500ml.id } })
     expect(v500AfterPaid.stock).toBe(48)
     expect(v500AfterPaid.reserved).toBe(0)
@@ -734,11 +740,21 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       (await prisma.coupon.findUniqueOrThrow({ where: { code: 'SAMPLE10' } })).used_count,
     ).toBe(1)
 
-    // Dismiss/fail releases reserved stock + coupon cleanly
+    // Dismiss/fail requires valid orderToken, rejecting invalid/missing tokens cleanly
     const winnerOrder = winners[0]!.body.order
+    const winnerToken = winners[0]!.body.payment.checkoutToken as string
+    await request(app.getHttpServer())
+      .post('/api/checkout/fail')
+      .send({
+        orderId: winnerOrder.id,
+        orderToken: 'forged-token-should-fail-0001',
+        reason: 'MODAL_DISMISSED',
+      })
+      .expect(403)
+
     const failRes = await request(app.getHttpServer())
       .post('/api/checkout/fail')
-      .send({ orderId: winnerOrder.id, reason: 'MODAL_DISMISSED' })
+      .send({ orderId: winnerOrder.id, orderToken: winnerToken, reason: 'MODAL_DISMISSED' })
       .expect(200)
     const failParsed = checkoutFailResponseSchema.parse(failRes.body)
     expect(failParsed.released).toBe(true)
@@ -789,7 +805,7 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
     expect(
       (await prisma.order.findUniqueOrThrow({ where: { id: staleCreate.body.order.id } }))
         .order_status,
-    ).toBe('PAID')
+    ).toBe('CONFIRMED')
 
     // Case B: Reservation expires with no payment -> released -> then late webhook/payment arrives when stock = 0 -> auto-refund + needs_attention!
     await prisma.variant.update({ where: { id: variant1L.id }, data: { stock: 2, reserved: 0 } })
@@ -871,6 +887,8 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
 
     // Restore clean dev stock & coupon count for subsequent dev inspection
     await prisma.checkoutIdempotencyKey.deleteMany()
+    await prisma.webhookEvent.deleteMany()
+    await prisma.refund.deleteMany()
     await prisma.payment.deleteMany()
     await prisma.orderEvent.deleteMany()
     await prisma.reservation.deleteMany()

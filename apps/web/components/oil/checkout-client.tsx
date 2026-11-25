@@ -257,16 +257,20 @@ export function CheckoutClient() {
     async (reason: 'PAYMENT_FAILED' | 'MODAL_DISMISSED' | 'CANCELLED', description?: string) => {
       if (!pendingSession) return
       const orderId = pendingSession.order.id
+      const orderToken = pendingSession.payment?.checkoutToken
       setShowMockModal(false)
       setPendingSession(null)
-      try {
-        await failCheckoutPayment({
-          orderId,
-          reason,
-          ...(description ? { errorDescription: description } : {}),
-        })
-      } catch {
-        // Best-effort UI cleanup; server reservation expiry covers lost signals
+      if (orderToken) {
+        try {
+          await failCheckoutPayment({
+            orderId,
+            orderToken,
+            reason,
+            ...(description ? { errorDescription: description } : {}),
+          })
+        } catch {
+          // Best-effort UI cleanup; server reservation expiry covers lost signals
+        }
       }
       regenerateIdempotencyKey()
       void revalidateCartNow()
@@ -288,6 +292,7 @@ export function CheckoutClient() {
     if (!loaded || !window.Razorpay) {
       await failCheckoutPayment({
         orderId: checkoutResp.order.id,
+        orderToken: payment.checkoutToken,
         reason: 'PAYMENT_FAILED',
         errorDescription: 'Razorpay checkout script failed to load',
       }).catch(() => undefined)

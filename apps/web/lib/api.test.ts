@@ -139,6 +139,7 @@ describe('storefront API client', () => {
       fulfilmentMethod: 'DELIVERY',
       paymentMethod: 'COD',
       paymentStatus: 'PENDING',
+      refundedPaise: 0,
       orderStatus: 'COD_PENDING',
       itemsSubtotalPaise: 20000,
       discountPaise: 0,
@@ -228,6 +229,7 @@ describe('storefront API client', () => {
 
     const failed = await failCheckoutPayment({
       orderId: sampleOrder.id,
+      orderToken: 'test-checkout-order-token-1234',
       reason: 'MODAL_DISMISSED',
     })
     expect(failed.released).toBe(true)
@@ -253,6 +255,7 @@ describe('storefront API client', () => {
           codMaxOrderPaise: null,
           legalPagesApproved: false,
           dpdpPolicyVersion: '2026-11-draft-v1',
+          autoConfirmPaidOrders: true,
           checkoutEnabled: false,
           paymentGateway: 'razorpay',
           fssaiNumber: '123',

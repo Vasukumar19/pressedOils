@@ -18,6 +18,8 @@ function runTsx(scriptPath: string, extraEnv: Record<string, string> = {}) {
 
 async function cleanDatabase() {
   await prisma.checkoutIdempotencyKey.deleteMany()
+  await prisma.webhookEvent.deleteMany()
+  await prisma.refund.deleteMany()
   await prisma.auditLog.deleteMany()
   await prisma.orderEvent.deleteMany()
   await prisma.reservation.deleteMany()
@@ -194,6 +196,61 @@ describe('PostgreSQL schema, constraints, and seeds (integration)', () => {
         },
       }),
     ).rejects.toThrow()
+
+    await expect(
+      prisma.order.create({
+        data: {
+          order_number: 'ORD-CHK-REFUND-NEG',
+          customer_id: customer.id,
+          address_snapshot: {},
+          subtotal_paise: 1000,
+          shipping_paise: 0,
+          refunded_paise: -10,
+          total_paise: 1000,
+          payment_method: 'ONLINE',
+        },
+      }),
+    ).rejects.toThrow()
+
+    await expect(
+      prisma.order.create({
+        data: {
+          order_number: 'ORD-CHK-ATTEMPTS-NEG',
+          customer_id: customer.id,
+          address_snapshot: {},
+          subtotal_paise: 1000,
+          shipping_paise: 0,
+          failed_payment_attempts: -1,
+          total_paise: 1000,
+          payment_method: 'ONLINE',
+        },
+      }),
+    ).rejects.toThrow()
+
+    // webhook_events.event_id uniqueness enforces idempotent deduplication at DB level
+    await prisma.webhookEvent.create({
+      data: {
+        provider: 'razorpay',
+        event_id: 'evt_constraint_unique_01',
+        event_type: 'payment.captured',
+        payload_hash: 'hash_01',
+        status: 'RECEIVED',
+        raw_payload: {},
+      },
+    })
+    await expect(
+      prisma.webhookEvent.create({
+        data: {
+          provider: 'razorpay',
+          event_id: 'evt_constraint_unique_01',
+          event_type: 'payment.captured',
+          payload_hash: 'hash_01',
+          status: 'RECEIVED',
+          raw_payload: {},
+        },
+      }),
+    ).rejects.toThrow()
+    await prisma.webhookEvent.delete({ where: { event_id: 'evt_constraint_unique_01' } })
 
     await prisma.customer.delete({ where: { id: customer.id } })
   })

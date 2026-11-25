@@ -167,6 +167,7 @@ describe('CartService stock visibility, free shipping, coupons, and pickup rules
         supportPhone: '+919999999999',
         registeredAddress: 'Chennai',
         requireLabReportForActivation: true,
+        autoConfirmPaidOrders: true,
         pickupLocations: overrides.pickupLocations ?? [],
       }),
     } as unknown as SettingsService

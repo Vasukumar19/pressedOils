@@ -1,10 +1,15 @@
-import { HttpException } from '@nestjs/common'
+import { type ExecutionContext, ForbiddenException, HttpException } from '@nestjs/common'
 import { describe, expect, it, vi } from 'vitest'
-import { CHECKOUT_RATE_LIMITS } from '@pressedoils/shared'
+import { CHECKOUT_RATE_LIMITS, TEMP_ADMIN_RATE_LIMITS } from '@pressedoils/shared'
+import { TempAdminGuard } from '../src/common/temp-admin.guard'
 import { env } from '../src/env'
 import { CheckoutRateLimitService } from '../src/checkout/checkout-rate-limit.service'
 import { CheckoutSecurityService } from '../src/checkout/checkout-security.service'
-import { computeRazorpayHmac, PaymentGatewayService } from '../src/checkout/payment-gateway.service'
+import {
+  computeRazorpayHmac,
+  computeWebhookHmac,
+  PaymentGatewayService,
+} from '../src/checkout/payment-gateway.service'
 import type { RedisService } from '../src/redis/redis.service'
 import { ResilientThrottlerStorage } from '../src/redis/resilient-throttler.storage'
 
@@ -160,5 +165,127 @@ describe('CheckoutRateLimitService', () => {
     await expect(limiter.enforceCreateRateLimit('198.51.100.1', sess)).rejects.toBeInstanceOf(
       HttpException,
     )
+  })
+})
+
+describe('Phase 6 webhook HMAC verification, order token & TempAdminGuard', () => {
+  it('verifies Razorpay webhook signature over exact raw body bytes and rejects prod mock fallback', () => {
+    const prevGateway = env.PAYMENT_GATEWAY
+    const prevWebhookSecret = env.RAZORPAY_WEBHOOK_SECRET
+    const prevAppEnv = env.APP_ENV
+    env.PAYMENT_GATEWAY = 'razorpay'
+    env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test_exact_bytes_1234'
+    env.APP_ENV = 'development'
+
+    try {
+      const gateway = new PaymentGatewayService()
+      const exactRaw = Buffer.from('{"id":"evt_1","event":"payment.captured"}', 'utf8')
+      const sig = computeWebhookHmac(exactRaw, 'whsec_test_exact_bytes_1234')
+
+      expect(gateway.verifyWebhookSignature(exactRaw, sig)).toBe(true)
+
+      // Identical parsed JSON with modified whitespace MUST fail exact raw byte HMAC check
+      const alteredWhitespace = Buffer.from(
+        '{ "id": "evt_1", "event": "payment.captured" }',
+        'utf8',
+      )
+      expect(gateway.verifyWebhookSignature(alteredWhitespace, sig)).toBe(false)
+      expect(gateway.verifyWebhookSignature(exactRaw, undefined)).toBe(false)
+      expect(gateway.verifyWebhookSignature(Buffer.alloc(0), sig)).toBe(false)
+
+      // In production runtime with missing RAZORPAY_WEBHOOK_SECRET, mock fallback never activates
+      env.APP_ENV = 'production'
+      env.RAZORPAY_WEBHOOK_SECRET = undefined
+      expect(gateway.verifyWebhookSignature(exactRaw, 'deadbeef'.repeat(8))).toBe(false)
+    } finally {
+      env.PAYMENT_GATEWAY = prevGateway
+      env.RAZORPAY_WEBHOOK_SECRET = prevWebhookSecret
+      env.APP_ENV = prevAppEnv
+    }
+  })
+
+  it('creates and constant-time verifies per-order checkout tokens for /checkout/fail', () => {
+    const sec = new CheckoutSecurityService()
+    const orderId = '550e8400-e29b-41d4-a716-446655440099'
+    const { plaintextToken, tokenHash } = sec.createCheckoutTokenPair(orderId)
+
+    expect(plaintextToken.length).toBeGreaterThanOrEqual(24)
+    expect(tokenHash).toHaveLength(64)
+    expect(sec.verifyCheckoutToken(orderId, plaintextToken, tokenHash)).toBe(true)
+    expect(
+      sec.verifyCheckoutToken('550e8400-e29b-41d4-a716-446655440100', plaintextToken, tokenHash),
+    ).toBe(false)
+    expect(sec.verifyCheckoutToken(orderId, 'too-short', tokenHash)).toBe(false)
+    expect(sec.verifyCheckoutToken(orderId, plaintextToken, null)).toBe(false)
+  })
+
+  it('TempAdminGuard disables temporary admin routes in production and enforces secret, IP allowlist & rate limit', async () => {
+    const redisDown = {
+      incrRateLimit: vi.fn().mockResolvedValue(null),
+      getString: vi.fn().mockResolvedValue(null),
+    } as unknown as RedisService
+    const guard = new TempAdminGuard(new ResilientThrottlerStorage(redisDown))
+
+    const makeCtx = (secret?: string, ip = '127.0.0.1'): ExecutionContext =>
+      ({
+        switchToHttp: () => ({
+          getRequest: () => ({
+            ip,
+            headers: secret ? { 'x-admin-secret': secret } : {},
+            socket: { remoteAddress: ip },
+          }),
+        }),
+      }) as unknown as ExecutionContext
+
+    const prevAppEnv = env.APP_ENV
+    const prevTempEnabled = env.ENABLE_TEMP_ADMIN_API
+    const prevSecret = env.OWNER_SETTINGS_SECRET
+    const prevAllowlist = env.TEMP_ADMIN_IP_ALLOWLIST
+
+    try {
+      env.OWNER_SETTINGS_SECRET = 'super-admin-secret-unit-1234'
+      env.ENABLE_TEMP_ADMIN_API = 'true'
+      env.TEMP_ADMIN_IP_ALLOWLIST = ['10.0.0.5']
+
+      // Production always refuses even when ENABLE_TEMP_ADMIN_API & secret match
+      env.APP_ENV = 'production'
+      await expect(
+        guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '10.0.0.5')),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+
+      env.APP_ENV = 'development'
+      // Disabled flag refuses
+      env.ENABLE_TEMP_ADMIN_API = 'false'
+      await expect(
+        guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '10.0.0.5')),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+
+      env.ENABLE_TEMP_ADMIN_API = 'true'
+      // Disallowed IP refuses
+      await expect(
+        guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '10.0.0.9')),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+      // Wrong secret refuses
+      await expect(guard.canActivate(makeCtx('wrong-secret', '10.0.0.5'))).rejects.toBeInstanceOf(
+        ForbiddenException,
+      )
+      // Valid secret & allowlisted IP passes up to 20/min
+      env.TEMP_ADMIN_IP_ALLOWLIST = []
+      await expect(
+        guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '192.0.2.50')),
+      ).resolves.toBe(true)
+
+      for (let i = 1; i < TEMP_ADMIN_RATE_LIMITS.IP_PER_MIN; i += 1) {
+        await guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '192.0.2.50'))
+      }
+      await expect(
+        guard.canActivate(makeCtx(env.OWNER_SETTINGS_SECRET, '192.0.2.50')),
+      ).rejects.toBeInstanceOf(HttpException)
+    } finally {
+      env.APP_ENV = prevAppEnv
+      env.ENABLE_TEMP_ADMIN_API = prevTempEnabled
+      env.OWNER_SETTINGS_SECRET = prevSecret
+      env.TEMP_ADMIN_IP_ALLOWLIST = prevAllowlist
+    }
   })
 })

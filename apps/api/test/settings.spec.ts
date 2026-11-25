@@ -120,6 +120,7 @@ describe('SettingsService public hiding & sample pickup protection', () => {
         maxActiveCodOrdersPerPhone: 2,
         legalPagesApproved: false,
         dpdpPolicyVersion: '2026-11-draft-v1',
+        autoConfirmPaidOrders: true,
         fssaiNumber: '123',
         supportEmail: 'a@b.com',
         supportPhone: '+919999999999',

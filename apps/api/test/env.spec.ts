@@ -38,6 +38,7 @@ describe('validateEnv', () => {
       APP_ENV: 'staging',
       DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
       REDIS_URL: 'redis://redis.internal:6379',
+      QUEUE_REDIS_URL: 'redis://redis-queue.internal:6380',
       SWAGGER_USER: 'reviewer',
       SWAGGER_PASSWORD: 'super-secret-staging-pw',
       CART_SESSION_SECRET: 'staging-cart-session-secret-1234',
@@ -93,16 +94,68 @@ describe('validateEnv', () => {
       }),
     ).toThrow()
 
+    // Missing RAZORPAY_WEBHOOK_SECRET fails production boot
+    expect(() =>
+      validateEnv({
+        NODE_ENV: 'production',
+        APP_ENV: 'production',
+        DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
+        REDIS_URL: 'redis://redis.internal:6379',
+        QUEUE_REDIS_URL: 'redis://redis-queue.internal:6380',
+        CART_SESSION_SECRET: 'prod-cart-session-secret-1234',
+        PICKUP_CODE_HMAC_SECRET: 'prod-pickup-hmac-secret-123456',
+        PAYMENT_GATEWAY: 'razorpay',
+        RAZORPAY_KEY_ID: 'rzp_live_123',
+        RAZORPAY_KEY_SECRET: 'rzp_secret_123',
+      }),
+    ).toThrow()
+
+    // Missing QUEUE_REDIS_URL fails production boot
+    expect(() =>
+      validateEnv({
+        NODE_ENV: 'production',
+        APP_ENV: 'production',
+        DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
+        REDIS_URL: 'redis://redis.internal:6379',
+        CART_SESSION_SECRET: 'prod-cart-session-secret-1234',
+        PICKUP_CODE_HMAC_SECRET: 'prod-pickup-hmac-secret-123456',
+        PAYMENT_GATEWAY: 'razorpay',
+        RAZORPAY_KEY_ID: 'rzp_live_123',
+        RAZORPAY_KEY_SECRET: 'rzp_secret_123',
+        RAZORPAY_WEBHOOK_SECRET: 'whsec_live_123',
+      }),
+    ).toThrow()
+
+    // ENABLE_TEMP_ADMIN_API=true fails production boot
+    expect(() =>
+      validateEnv({
+        NODE_ENV: 'production',
+        APP_ENV: 'production',
+        DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
+        REDIS_URL: 'redis://redis.internal:6379',
+        QUEUE_REDIS_URL: 'redis://redis-queue.internal:6380',
+        CART_SESSION_SECRET: 'prod-cart-session-secret-1234',
+        PICKUP_CODE_HMAC_SECRET: 'prod-pickup-hmac-secret-123456',
+        PAYMENT_GATEWAY: 'razorpay',
+        RAZORPAY_KEY_ID: 'rzp_live_123',
+        RAZORPAY_KEY_SECRET: 'rzp_secret_123',
+        RAZORPAY_WEBHOOK_SECRET: 'whsec_live_123',
+        ENABLE_TEMP_ADMIN_API: 'true',
+      }),
+    ).toThrow()
+
     const validProd = validateEnv({
       NODE_ENV: 'production',
       APP_ENV: 'production',
       DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
       REDIS_URL: 'redis://redis.internal:6379',
+      QUEUE_REDIS_URL: 'redis://redis-queue.internal:6380',
       CART_SESSION_SECRET: 'prod-cart-session-secret-1234',
       PICKUP_CODE_HMAC_SECRET: 'prod-pickup-hmac-secret-123456',
       PAYMENT_GATEWAY: 'razorpay',
       RAZORPAY_KEY_ID: 'rzp_live_123',
       RAZORPAY_KEY_SECRET: 'rzp_secret_123',
+      RAZORPAY_WEBHOOK_SECRET: 'whsec_live_123',
     })
     expect(validProd.PAYMENT_GATEWAY).toBe('razorpay')
   })

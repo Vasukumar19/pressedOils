@@ -40,11 +40,16 @@ _No owner actions required for Phase 0._
 - [ ] Confirm GST registration details (GSTIN, HSN code for edible oils).
 - [ ] Confirm whether DPDP Act consent banner is required at launch.
 
-### Payments
+### Payments & Webhooks (Phase 6 updates)
 
 - [ ] Create a Razorpay account and supply the live API keys (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`) plus `PICKUP_CODE_HMAC_SECRET` in production environment secrets (never commit in code).
+- [ ] Configure the Razorpay production webhook URL (`https://<api-domain>/api/webhooks/razorpay`) with the same `RAZORPAY_WEBHOOK_SECRET`, subscribing to `payment.captured`, `order.paid`, `payment.failed`, `refund.processed`, and `refund.failed`.
+- [ ] Set `OWNER_ALERT_EMAIL` (and `SENTRY_DSN` in production) so critical payment/currency mismatches, late out-of-stock refunds, unexpected dashboard refunds on unshipped orders, and permanently failed worker jobs page/email an operator immediately.
+- [ ] Provision **two separate Redis instances** in production: `REDIS_URL` (`volatile-lru` for cache & rate limits) and `QUEUE_REDIS_URL` (`noeviction` + AOF persistence for durable BullMQ queues & workers). Run the standalone worker process (`pnpm --filter @pressedoils/api worker:start`) alongside the API.
+- [ ] Keep `ENABLE_TEMP_ADMIN_API=false` in production (the API refuses boot if enabled in prod); pre-Phase-9 manual ops scripts use CLI audit scripts.
+- [ ] Review `auto_confirm_paid_orders` (defaults to `true`, automatically transitioning verified `PAID` orders to `CONFIRMED`; toggle via owner setting or `--auto-confirm=false` before Phase 9 Admin UI).
 - [ ] Confirm whether to keep Cash on Delivery enabled (`cod_config`), review `cod_fee_paise` (default ₹0) and `cod_max_order_paise` (default ₹5,000), and do NOT enable COD or Pay-at-Store in production until Phase 7 SMS OTP verification is active.
-- [ ] Do a small-value live test payment and refund before full launch.
+- [ ] Do a small-value live test payment and refund (verifying both `refund.processed` webhook finality and manual cancel/return-stock behavior) before full launch.
 
 ### Notifications
 
