@@ -8,13 +8,19 @@ minimumReleaseAgeExclude:
   - '@next/*'
   - next
 
-# Allow native build scripts for these packages (required for SWC and esbuild)
+# Allow native build scripts for these packages (required for SWC, esbuild, sharp, Prisma)
 onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
   - '@swc/core'
   - esbuild
+  - prisma
   - sharp
 
 allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
   '@swc/core': true
   esbuild: true
+  prisma: true
   sharp: true

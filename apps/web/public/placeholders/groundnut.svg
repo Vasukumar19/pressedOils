@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000" viewBox="0 0 800 1000" role="img" aria-label="Placeholder image for Groundnut Oil">
+  <rect width="800" height="1000" fill="#F3EBDB"/>
+  <rect x="40" y="40" width="720" height="920" fill="none" stroke="#C3A265" stroke-opacity="0.45" stroke-width="2"/>
+  <rect x="260" y="250" width="280" height="420" rx="140" fill="#FCF9F3" stroke="#2A2118" stroke-width="2"/>
+  <rect x="345" y="180" width="110" height="70" fill="#2A2118"/>
+  <text x="400" y="455" text-anchor="middle" font-family="Georgia, serif" font-size="34" fill="#2A2118">Groundnut Oil</text>
+  <text x="400" y="505" text-anchor="middle" font-family="monospace" font-size="16" letter-spacing="4" fill="#6F5222">PLACEHOLDER IMAGE</text>
+  <text x="400" y="900" text-anchor="middle" font-family="monospace" font-size="14" letter-spacing="3" fill="#6A5E4E">DEV &amp; STAGING ONLY</text>
+</svg>

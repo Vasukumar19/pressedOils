@@ -1,0 +1,344 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  COD_PENDING
+  PAID
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  ONLINE
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  RELEASED
+  EXPIRED
+}
+
+enum CouponType {
+  PERCENT
+  FLAT
+}
+
+enum AdminRole {
+  OWNER
+  STAFF
+}
+
+model Product {
+  id            String         @id @default(uuid())
+  slug          String         @unique
+  name          String
+  description   String
+  best_for      String
+  origin_region String
+  is_active     Boolean        @default(false)
+  sort_order    Int            @default(0)
+  brand         String         @default("[YOUR BRAND]")
+  created_at    DateTime       @default(now()) @db.Timestamptz(3)
+  updated_at    DateTime       @updatedAt @db.Timestamptz(3)
+  images        ProductImage[]
+  variants      Variant[]
+  batches       Batch[]
+
+  @@index([is_active, sort_order])
+  @@map("products")
+}
+
+model ProductImage {
+  id         String   @id @default(uuid())
+  product_id String
+  url        String
+  alt        String
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamptz(3)
+  product    Product  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id, sort_order])
+  @@map("product_images")
+}
+
+model Variant {
+  id                  String          @id @default(uuid())
+  product_id          String
+  sku                 String          @unique
+  size_label          String
+  price_paise         Int
+  mrp_paise           Int
+  stock               Int             @default(0)
+  reserved            Int             @default(0)
+  low_stock_threshold Int             @default(5)
+  is_active           Boolean         @default(true)
+  created_at          DateTime        @default(now()) @db.Timestamptz(3)
+  updated_at          DateTime        @updatedAt @db.Timestamptz(3)
+  product             Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  batches             Batch[]
+  order_items         OrderItem[]
+  stock_movements     StockMovement[]
+  reservations        Reservation[]
+
+  @@index([product_id, is_active])
+  @@map("variants")
+}
+
+model Batch {
+  id                  String      @id @default(uuid())
+  product_id          String
+  variant_id          String?
+  batch_no            String
+  pressed_on          DateTime    @db.Date
+  best_before         DateTime    @db.Date
+  lab_report_url      String?
+  lab_report_key      String?
+  lab_report_checksum String?
+  lab_tested_on       DateTime?   @db.Date
+  is_current          Boolean     @default(false)
+  is_active           Boolean     @default(true)
+  locked_at           DateTime?   @db.Timestamptz(3)
+  created_at          DateTime    @default(now()) @db.Timestamptz(3)
+  updated_at          DateTime    @updatedAt @db.Timestamptz(3)
+  product             Product     @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  variant             Variant?    @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+  order_items         OrderItem[]
+
+  @@unique([product_id, batch_no])
+  @@index([batch_no])
+  @@index([product_id, is_active])
+  @@map("batches")
+}
+
+model Customer {
+  id               String    @id @default(uuid())
+  name             String
+  phone            String    @unique
+  email            String?
+  consent_given_at DateTime? @db.Timestamptz(3)
+  deleted_at       DateTime? @db.Timestamptz(3)
+  created_at       DateTime  @default(now()) @db.Timestamptz(3)
+  updated_at       DateTime  @updatedAt @db.Timestamptz(3)
+  addresses        Address[]
+  orders           Order[]
+
+  @@map("customers")
+}
+
+model Address {
+  id          String   @id @default(uuid())
+  customer_id String
+  name        String
+  phone       String
+  line1       String
+  line2       String?
+  city        String
+  state       String
+  pincode     String
+  created_at  DateTime @default(now()) @db.Timestamptz(3)
+  updated_at  DateTime @updatedAt @db.Timestamptz(3)
+  customer    Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
+  @@index([customer_id])
+  @@map("addresses")
+}
+
+model Order {
+  id               String          @id @default(uuid())
+  order_number     String          @unique
+  customer_id      String
+  address_snapshot Json
+  subtotal_paise   Int
+  shipping_paise   Int
+  discount_paise   Int             @default(0)
+  tax_paise        Int             @default(0)
+  total_paise      Int
+  coupon_code      String?
+  payment_method   PaymentMethod
+  payment_status   PaymentStatus   @default(PENDING)
+  order_status     OrderStatus     @default(PENDING_PAYMENT)
+  tracking_url     String?
+  created_at       DateTime        @default(now()) @db.Timestamptz(3)
+  updated_at       DateTime        @updatedAt @db.Timestamptz(3)
+  customer         Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  items            OrderItem[]
+  events           OrderEvent[]
+  payments         Payment[]
+  stock_movements  StockMovement[]
+  reservations     Reservation[]
+
+  @@index([customer_id, created_at])
+  @@index([order_status, created_at])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                    String  @id @default(uuid())
+  order_id              String
+  variant_id            String
+  batch_id              String?
+  product_name_snapshot String
+  size_snapshot         String
+  qty                   Int
+  unit_price_paise      Int
+  order                 Order   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  variant               Variant @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+  batch                 Batch?  @relation(fields: [batch_id], references: [id], onDelete: Restrict)
+
+  @@index([order_id])
+  @@index([batch_id])
+  @@map("order_items")
+}
+
+model OrderEvent {
+  id         String      @id @default(uuid())
+  order_id   String
+  status     OrderStatus
+  note       String?
+  actor      String
+  created_at DateTime    @default(now()) @db.Timestamptz(3)
+  order      Order       @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id, created_at])
+  @@map("order_events")
+}
+
+model Payment {
+  id                 String        @id @default(uuid())
+  order_id           String
+  gateway            String
+  gateway_order_id   String?
+  gateway_payment_id String?       @unique
+  amount_paise       Int
+  status             PaymentStatus @default(PENDING)
+  raw_payload        Json?
+  created_at         DateTime      @default(now()) @db.Timestamptz(3)
+  updated_at         DateTime      @updatedAt @db.Timestamptz(3)
+  order              Order         @relation(fields: [order_id], references: [id], onDelete: Restrict)
+
+  @@index([order_id])
+  @@index([gateway_order_id])
+  @@map("payments")
+}
+
+model StockMovement {
+  id         String   @id @default(uuid())
+  variant_id String
+  delta      Int
+  reason     String
+  order_id   String?
+  actor      String
+  created_at DateTime @default(now()) @db.Timestamptz(3)
+  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+  order      Order?   @relation(fields: [order_id], references: [id], onDelete: SetNull)
+
+  @@index([variant_id, created_at])
+  @@index([order_id])
+  @@map("stock_movements")
+}
+
+model Reservation {
+  id         String            @id @default(uuid())
+  order_id   String
+  variant_id String
+  qty        Int
+  expires_at DateTime          @db.Timestamptz(3)
+  status     ReservationStatus @default(PENDING)
+  created_at DateTime          @default(now()) @db.Timestamptz(3)
+  updated_at DateTime          @updatedAt @db.Timestamptz(3)
+  order      Order             @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  variant    Variant           @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@index([status, expires_at])
+  @@index([order_id])
+  @@map("reservations")
+}
+
+model Coupon {
+  id              String     @id @default(uuid())
+  code            String     @unique
+  type            CouponType
+  value           Int
+  min_order_paise Int        @default(0)
+  expires_at      DateTime?  @db.Timestamptz(3)
+  usage_limit     Int?
+  used_count      Int        @default(0)
+  is_active       Boolean    @default(true)
+  created_at      DateTime   @default(now()) @db.Timestamptz(3)
+  updated_at      DateTime   @updatedAt @db.Timestamptz(3)
+
+  @@map("coupons")
+}
+
+model ServiceablePincode {
+  pincode        String   @id
+  city           String
+  state          String
+  delivery_days  Int
+  cod_allowed    Boolean  @default(true)
+  shipping_paise Int
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(3)
+  updated_at     DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("serviceable_pincodes")
+}
+
+model Setting {
+  key        String   @id
+  value      Json
+  updated_at DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("settings")
+}
+
+model Admin {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  password_hash     String?
+  must_set_password Boolean    @default(true)
+  role              AdminRole  @default(STAFF)
+  totp_secret       String?
+  is_active         Boolean    @default(true)
+  created_at        DateTime   @default(now()) @db.Timestamptz(3)
+  updated_at        DateTime   @updatedAt @db.Timestamptz(3)
+  audit_logs        AuditLog[]
+
+  @@map("admins")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  admin_id   String?
+  action     String
+  entity     String
+  entity_id  String
+  before     Json?
+  after      Json?
+  created_at DateTime @default(now()) @db.Timestamptz(3)
+  admin      Admin?   @relation(fields: [admin_id], references: [id], onDelete: SetNull)
+
+  @@index([entity, entity_id, created_at])
+  @@index([admin_id, created_at])
+  @@map("audit_logs")
+}

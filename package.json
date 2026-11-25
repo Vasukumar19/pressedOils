@@ -15,6 +15,13 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:ci": "turbo run test:ci",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @pressedoils/api db:migrate",
+    "db:seed:dev": "pnpm --filter @pressedoils/api seed:dev",
+    "db:bootstrap:prod": "pnpm --filter @pressedoils/api bootstrap:prod",
+    "db:setup": "pnpm --filter @pressedoils/api db:setup",
+    "check:no-placeholders": "pnpm --filter @pressedoils/api check:no-placeholders",
     "prepare": "husky"
   },
   "devDependencies": {
