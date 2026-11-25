@@ -10,6 +10,7 @@ export const MAINTENANCE_JOB_NAMES = {
   RESERVATION_EXPIRY: 'reservation-expiry',
   RECONCILE_RECENT: 'reconcile-recent',
   RECONCILE_AGING_AND_EXPIRE_24H: 'reconcile-aging-24h',
+  PROVIDER_HEALTH_CHECK: 'provider-health-check',
 } as const
 
 export const NOTIFICATION_JOB_NAMES = {
@@ -24,6 +25,7 @@ export const REPEATABLE_SCHEDULER_IDS = {
   RESERVATION_EXPIRY_1M: 'sched-reservation-expiry-1m',
   RECONCILE_RECENT_2M: 'sched-reconcile-recent-2m',
   RECONCILE_AGING_30M: 'sched-reconcile-aging-30m',
+  PROVIDER_HEALTH_30M: 'sched-provider-health-30m',
 } as const
 
 export const DEFAULT_QUEUE_JOB_OPTIONS: JobsOptions = {

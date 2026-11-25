@@ -204,10 +204,14 @@ model Order {
   pickup_location_id       String?
   pickup_code_hash         String?
   pickup_code_attempts     Int                      @default(0)
-  pickup_code_locked_until DateTime?                @db.Timestamptz(3)
-  pickup_ready_at          DateTime?                @db.Timestamptz(3)
-  picked_up_at             DateTime?                @db.Timestamptz(3)
-  dpdp_consent_at          DateTime?                @db.Timestamptz(3)
+  pickup_code_locked_until   DateTime?                @db.Timestamptz(3)
+  pickup_ready_at            DateTime?                @db.Timestamptz(3)
+  pickup_last_collection_at  DateTime?                @db.Timestamptz(3)
+  pickup_code_reissue_count  Int                      @default(0)
+  pickup_code_last_sent_at   DateTime?                @db.Timestamptz(3)
+  picked_up_at               DateTime?                @db.Timestamptz(3)
+  phone_verified_at          DateTime?                @db.Timestamptz(3)
+  dpdp_consent_at            DateTime?                @db.Timestamptz(3)
   dpdp_policy_version      String?
   marketing_consent        Boolean                  @default(false)
   needs_attention          Boolean                  @default(false)
@@ -227,6 +231,7 @@ model Order {
   payments                 Payment[]
   refunds                  Refund[]
   webhook_events           WebhookEvent[]
+  notifications            NotificationLog[]
   stock_movements          StockMovement[]
   reservations             Reservation[]
   idempotency_keys         CheckoutIdempotencyKey[]
@@ -445,4 +450,73 @@ model AuditLog {
   @@index([entity, entity_id, created_at])
   @@index([admin_id, created_at])
   @@map("audit_logs")
+}
+
+model NotificationLog {
+  id                  String    @id @default(uuid())
+  idempotency_key     String    @unique
+  order_id            String?
+  channel             String
+  event               String
+  template_id         String
+  template_version    String
+  provider            String
+  provider_message_id String?
+  masked_recipient    String
+  status              String
+  error_message       String?
+  payload_summary     Json?
+  sent_at             DateTime? @db.Timestamptz(3)
+  delivered_at        DateTime? @db.Timestamptz(3)
+  created_at          DateTime  @default(now()) @db.Timestamptz(3)
+  updated_at          DateTime  @updatedAt @db.Timestamptz(3)
+  order               Order?    @relation(fields: [order_id], references: [id], onDelete: SetNull)
+
+  @@index([order_id, created_at])
+  @@index([provider_message_id])
+  @@index([status, created_at])
+  @@map("notifications")
+}
+
+model EmailSuppression {
+  email_hash      String   @id
+  masked_email    String
+  reason          String
+  source_provider String
+  source_event_id String?
+  created_at      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("email_suppressions")
+}
+
+model OtpChallenge {
+  id           String    @id @default(uuid())
+  purpose      String
+  phone_hash   String
+  session_id   String
+  code_hmac    String
+  attempts     Int       @default(0)
+  max_attempts Int       @default(5)
+  expires_at   DateTime  @db.Timestamptz(3)
+  consumed_at  DateTime? @db.Timestamptz(3)
+  created_at   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([phone_hash, purpose, created_at])
+  @@index([expires_at])
+  @@map("otp_challenges")
+}
+
+model PhoneVerificationToken {
+  id         String    @id @default(uuid())
+  purpose    String
+  token_hash String    @unique
+  phone_hash String
+  session_id String
+  expires_at DateTime  @db.Timestamptz(3)
+  used_at    DateTime? @db.Timestamptz(3)
+  created_at DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([phone_hash, purpose])
+  @@index([expires_at])
+  @@map("phone_verification_tokens")
 }

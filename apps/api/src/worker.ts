@@ -1,9 +1,11 @@
 import { Logger } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
+import { ALERT_SEVERITY } from '@pressedoils/shared'
 import { Worker } from 'bullmq'
 import { Logger as PinoLogger } from 'nestjs-pino'
 import { CheckoutService } from './checkout/checkout.service'
 import { env } from './env'
+import { NotificationsService } from './notifications/notifications.service'
 import { OpsAlertService } from './queue/ops-alert.service'
 import {
   ALERT_JOB_NAMES,
@@ -31,6 +33,7 @@ async function bootstrapWorker(): Promise<void> {
 
   const logger = new Logger('BullMqWorker')
   const checkoutService = app.get(CheckoutService)
+  const notificationsService = app.get(NotificationsService)
   const queueService = app.get(QueueService)
   const opsAlertService = app.get(OpsAlertService)
   const connection = buildBullMqConnectionOptions(env.QUEUE_REDIS_URL)
@@ -58,6 +61,9 @@ async function bootstrapWorker(): Promise<void> {
           expireAfterMinutes: 24 * 60,
         })
       }
+      if (job.name === MAINTENANCE_JOB_NAMES.PROVIDER_HEALTH_CHECK) {
+        return notificationsService.runProviderHealthAndBalanceCheck()
+      }
       logger.warn({ event: 'UNKNOWN_MAINTENANCE_JOB', name: job.name, jobId: job.id })
       return { skipped: true }
     },
@@ -68,13 +74,7 @@ async function bootstrapWorker(): Promise<void> {
     QUEUE_NAMES.NOTIFICATIONS,
     async (job) => {
       if (job.name === NOTIFICATION_JOB_NAMES.CUSTOMER_ORDER_UPDATE) {
-        // Channel adapters (email/WhatsApp) plug in here in Phase 7; never log PII fields
-        logger.log({
-          event: 'CUSTOMER_NOTIFICATION_PROCESSED',
-          notificationEvent: job.data.event,
-          orderId: job.data.orderId,
-          orderNumber: job.data.orderNumber,
-        })
+        await notificationsService.deliverCustomerNotification(job.data)
         return { delivered: true }
       }
       return { skipped: true }
@@ -86,14 +86,7 @@ async function bootstrapWorker(): Promise<void> {
     QUEUE_NAMES.OPS_ALERTS,
     async (job) => {
       if (job.name === ALERT_JOB_NAMES.CRITICAL_OPS_ALERT) {
-        logger.error({
-          event: 'OPS_ALERT_DISPATCHED',
-          alertKey: job.data.alertKey,
-          severity: job.data.severity,
-          orderId: job.data.orderId ?? null,
-          hasOwnerEmailConfigured: Boolean(job.data.ownerEmail),
-          message: job.data.message,
-        })
+        await notificationsService.dispatchOwnerAlertDelivery(job.data)
         return { dispatched: true }
       }
       return { skipped: true }
@@ -119,7 +112,7 @@ async function bootstrapWorker(): Promise<void> {
       if (exhausted) {
         void opsAlertService.alertCritical({
           alertKey: `worker-job-exhausted-${w.name}`,
-          severity: 'CRITICAL',
+          severity: ALERT_SEVERITY.CRITICAL,
           message: `Worker job "${job?.name ?? 'unknown'}" (${job?.id ?? 'no-id'}) failed permanently on queue "${w.name}": ${err.message}`,
           details: { queue: w.name, jobId: job?.id ?? null, attemptsMade: job?.attemptsMade ?? 0 },
         })

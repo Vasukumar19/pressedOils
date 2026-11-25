@@ -15,15 +15,20 @@ export interface CustomerNotificationJobPayload {
   orderId: string
   orderNumber: string
   message: string
+  amountPaise?: number
+  cumulativeRefundedPaise?: number
+  trackingUrl?: string | null
+  pickupCode?: string
 }
 
 export interface OpsAlertJobPayload {
+  alertDispatchId: string
   alertKey: string
-  severity: 'HIGH' | 'CRITICAL'
-  ownerEmail: string | null
+  severity: 'INFO' | 'WARNING' | 'CRITICAL'
   orderId?: string
+  orderNumber?: string
   message: string
-  details?: Record<string, unknown>
+  occurrenceCount: number
 }
 
 export function buildBullMqConnectionOptions(redisUrl: string) {
@@ -124,17 +129,44 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           opts: DEFAULT_QUEUE_JOB_OPTIONS,
         },
       ),
+      this.maintenanceQueue.upsertJobScheduler(
+        REPEATABLE_SCHEDULER_IDS.PROVIDER_HEALTH_30M,
+        { pattern: '*/30 * * * *' }, // Every 30 minutes (email/SMS health, balance, queue backlog)
+        {
+          name: MAINTENANCE_JOB_NAMES.PROVIDER_HEALTH_CHECK,
+          data: {},
+          opts: { ...DEFAULT_QUEUE_JOB_OPTIONS, attempts: 2 },
+        },
+      ),
     ])
 
     this.logger.log('Registered repeatable BullMQ maintenance job schedulers')
   }
 
+  async getFailedJobsCount(): Promise<number> {
+    const queues = [this.maintenanceQueue, this.notificationsQueue, this.opsAlertsQueue].filter(
+      (q): q is Queue => Boolean(q),
+    )
+    if (queues.length === 0) return 0
+    const counts = await Promise.all(queues.map((q) => q.getFailedCount().catch(() => 0)))
+    return counts.reduce((sum, n) => sum + n, 0)
+  }
+
   async enqueueCustomerNotification(payload: CustomerNotificationJobPayload): Promise<void> {
     if (!this.notificationsQueue) return
     try {
+      const containsSecretCode = Boolean(payload.pickupCode)
+      const uniqueSuffix = payload.pickupCode
+        ? `-${Date.now()}`
+        : payload.event === 'ORDER_PARTIALLY_REFUNDED' &&
+            typeof payload.cumulativeRefundedPaise === 'number'
+          ? `-${payload.cumulativeRefundedPaise}`
+          : ''
       await this.notificationsQueue.add(NOTIFICATION_JOB_NAMES.CUSTOMER_ORDER_UPDATE, payload, {
         ...DEFAULT_QUEUE_JOB_OPTIONS,
-        jobId: `notify-${payload.event}-${payload.orderId}`,
+        // Never leave plaintext pickup codes cached in Redis completed/failed lists
+        ...(containsSecretCode ? { removeOnComplete: true, removeOnFail: true } : {}),
+        jobId: `notify-${payload.event}-${payload.orderId}${uniqueSuffix}`,
       })
     } catch (error) {
       this.logger.error({

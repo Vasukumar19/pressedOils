@@ -3,6 +3,8 @@ import { LoggerModule } from 'nestjs-pino'
 import { CartModule } from './cart/cart.module'
 import { CheckoutModule } from './checkout/checkout.module'
 import { env } from './env'
+import { NotificationsModule } from './notifications/notifications.module'
+import { OtpModule } from './otp/otp.module'
 import { PincodeModule } from './pincode/pincode.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { ProductsModule } from './products/products.module'
@@ -22,9 +24,11 @@ import { SettingsModule } from './settings/settings.module'
     RedisModule,
     QueueModule,
     SettingsModule,
+    NotificationsModule,
     ProductsModule,
     PincodeModule,
     CartModule,
+    OtpModule,
     CheckoutModule,
   ],
 })

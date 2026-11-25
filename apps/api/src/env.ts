@@ -1,5 +1,52 @@
 import 'dotenv/config'
+import { indianPhoneSchema } from '@pressedoils/shared'
 import { z } from 'zod'
+
+const emailListSchema = z
+  .string()
+  .default('')
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  .refine((emails) => emails.every((e) => z.string().email().safeParse(e).success), {
+    message: 'Every OWNER_ALERT_EMAIL entry must be a valid email address',
+  })
+
+const phoneListSchema = z
+  .string()
+  .default('')
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
+  .transform((phones, ctx) => {
+    const normalized: string[] = []
+    for (const p of phones) {
+      const parsed = indianPhoneSchema.safeParse(p)
+      if (!parsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Invalid Indian mobile in OWNER_ALERT_PHONE: ${p}`,
+        })
+        return z.NEVER
+      }
+      normalized.push(parsed.data)
+    }
+    return normalized
+  })
+
+const emailFromSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^([^<>]+<\s*)?[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+(\s*>)?$/,
+    'EMAIL_FROM must contain a valid email address (e.g. "Brand <orders@domain.com>")',
+  )
 
 const corsOriginsSchema = z
   .string()
@@ -83,13 +130,38 @@ const envSchema = z
     RAZORPAY_KEY_ID: z.string().trim().min(1).optional(),
     RAZORPAY_KEY_SECRET: z.string().trim().min(1).optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
-    OWNER_ALERT_EMAIL: z.string().trim().email().optional(),
+    OTP_HMAC_SECRET: z.string().trim().min(16).optional(),
+    SMS_PROVIDER: z.enum(['msg91', 'mock']).optional(),
+    EMAIL_PROVIDER: z.enum(['resend', 'mock']).optional(),
+    ALLOW_MOCK_NOTIFICATIONS: z.enum(['true', 'false']).default('false'),
+    MSG91_AUTH_KEY: z.string().trim().min(1).optional(),
+    MSG91_SENDER_ID: z.string().trim().min(3).max(11).optional(),
+    MSG91_WEBHOOK_SECRET: z.string().trim().min(16).optional(),
+    MSG91_DLT_TEMPLATE_OTP: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_ORDER_CONFIRMED: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_ORDER_SHIPPED: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_ORDER_DELIVERED: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_ORDER_READY_FOR_PICKUP: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_PICKUP_CODE: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_OWNER_ALERT: z.string().trim().min(1).optional(),
+    MSG91_DLT_TEMPLATE_ORDER_UPDATE: z.string().trim().min(1).optional(),
+    RESEND_API_KEY: z.string().trim().min(1).optional(),
+    EMAIL_FROM: emailFromSchema.optional(),
+    RESEND_WEBHOOK_SECRET: z.string().trim().min(16).optional(),
+    TURNSTILE_SITE_KEY: z.string().trim().min(1).optional(),
+    TURNSTILE_SECRET_KEY: z.string().trim().min(1).optional(),
+    OWNER_ALERT_EMAIL: emailListSchema,
+    OWNER_ALERT_PHONE: phoneListSchema,
+    UPTIME_ALERT_WEBHOOK_URL: z.string().trim().url().optional(),
+    SMS_LOW_BALANCE_THRESHOLD: z.coerce.number().int().min(0).default(500),
     SENTRY_DSN: z.string().trim().url().optional(),
     LEGAL_PRIVACY_VERSION: z.string().trim().min(1).default('2026-11-draft-v1'),
   })
   .transform((data) => ({
     ...data,
     PAYMENT_GATEWAY: data.PAYMENT_GATEWAY ?? (data.APP_ENV === 'production' ? 'razorpay' : 'mock'),
+    SMS_PROVIDER: data.SMS_PROVIDER ?? (data.APP_ENV === 'production' ? 'msg91' : 'mock'),
+    EMAIL_PROVIDER: data.EMAIL_PROVIDER ?? (data.APP_ENV === 'production' ? 'resend' : 'mock'),
   }))
   .superRefine((data, ctx) => {
     const isProdTarget = data.APP_ENV === 'production' || data.IS_PRODUCTION_DB === 'true'
@@ -111,6 +183,20 @@ const envSchema = z
       })
     }
 
+    if (
+      isProdTarget &&
+      (data.SMS_PROVIDER === 'mock' ||
+        data.EMAIL_PROVIDER === 'mock' ||
+        data.ALLOW_MOCK_NOTIFICATIONS === 'true')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SMS_PROVIDER'],
+        message:
+          'Mock SMS/email transports cannot be enabled when APP_ENV=production or IS_PRODUCTION_DB=true',
+      })
+    }
+
     if (data.APP_ENV === 'production') {
       if (!data.PICKUP_CODE_HMAC_SECRET) {
         ctx.addIssue({
@@ -124,6 +210,91 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ['RAZORPAY_WEBHOOK_SECRET'],
           message: 'RAZORPAY_WEBHOOK_SECRET is required in production',
+        })
+      }
+      if (!data.OTP_HMAC_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['OTP_HMAC_SECRET'],
+          message: 'OTP_HMAC_SECRET is required in production',
+        })
+      }
+
+      const requiredSmsFields: Array<[keyof typeof data, string]> = [
+        ['MSG91_AUTH_KEY', 'MSG91_AUTH_KEY'],
+        ['MSG91_SENDER_ID', 'MSG91_SENDER_ID'],
+        ['MSG91_DLT_TEMPLATE_OTP', 'MSG91_DLT_TEMPLATE_OTP'],
+        ['MSG91_DLT_TEMPLATE_ORDER_CONFIRMED', 'MSG91_DLT_TEMPLATE_ORDER_CONFIRMED'],
+        ['MSG91_DLT_TEMPLATE_ORDER_SHIPPED', 'MSG91_DLT_TEMPLATE_ORDER_SHIPPED'],
+        ['MSG91_DLT_TEMPLATE_ORDER_DELIVERED', 'MSG91_DLT_TEMPLATE_ORDER_DELIVERED'],
+        ['MSG91_DLT_TEMPLATE_ORDER_READY_FOR_PICKUP', 'MSG91_DLT_TEMPLATE_ORDER_READY_FOR_PICKUP'],
+        ['MSG91_DLT_TEMPLATE_PICKUP_CODE', 'MSG91_DLT_TEMPLATE_PICKUP_CODE'],
+        ['MSG91_DLT_TEMPLATE_OWNER_ALERT', 'MSG91_DLT_TEMPLATE_OWNER_ALERT'],
+        ['MSG91_DLT_TEMPLATE_ORDER_UPDATE', 'MSG91_DLT_TEMPLATE_ORDER_UPDATE'],
+      ]
+      for (const [key, label] of requiredSmsFields) {
+        if (!data[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${label} is required in production`,
+          })
+        }
+      }
+
+      if (!data.RESEND_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RESEND_API_KEY'],
+          message: 'RESEND_API_KEY is required in production',
+        })
+      }
+      if (!data.EMAIL_FROM) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['EMAIL_FROM'],
+          message: 'EMAIL_FROM is required in production',
+        })
+      }
+      if (!data.RESEND_WEBHOOK_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RESEND_WEBHOOK_SECRET'],
+          message: 'RESEND_WEBHOOK_SECRET is required in production',
+        })
+      }
+    }
+
+    if (data.SMS_PROVIDER === 'msg91' && (isProdTarget || data.NODE_ENV !== 'test')) {
+      if (!data.MSG91_AUTH_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['MSG91_AUTH_KEY'],
+          message: 'MSG91_AUTH_KEY is required when SMS_PROVIDER=msg91',
+        })
+      }
+      if (!data.MSG91_SENDER_ID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['MSG91_SENDER_ID'],
+          message: 'MSG91_SENDER_ID is required when SMS_PROVIDER=msg91',
+        })
+      }
+    }
+
+    if (data.EMAIL_PROVIDER === 'resend' && (isProdTarget || data.NODE_ENV !== 'test')) {
+      if (!data.RESEND_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RESEND_API_KEY'],
+          message: 'RESEND_API_KEY is required when EMAIL_PROVIDER=resend',
+        })
+      }
+      if (!data.EMAIL_FROM) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['EMAIL_FROM'],
+          message: 'EMAIL_FROM is required when EMAIL_PROVIDER=resend',
         })
       }
     }
