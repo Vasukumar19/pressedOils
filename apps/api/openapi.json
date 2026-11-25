@@ -1,0 +1,227 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "HealthController_checkLiveness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "API process is alive"
+          }
+        },
+        "summary": "Liveness probe — confirms the API process is running",
+        "tags": ["health"]
+      }
+    },
+    "/api/health/ready": {
+      "get": {
+        "operationId": "HealthController_checkReadiness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Database is reachable (Redis may be ok or degraded)"
+          },
+          "503": {
+            "description": "Database is unreachable"
+          }
+        },
+        "summary": "Readiness probe — depends on PostgreSQL only; reports Redis degraded with HTTP 200",
+        "tags": ["health"]
+      }
+    },
+    "/api/products": {
+      "get": {
+        "operationId": "ProductsController_list",
+        "parameters": [
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": ["featured", "price_asc", "price_desc", "newest"],
+              "type": "string"
+            }
+          },
+          {
+            "name": "maxPricePaise",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "minPricePaise",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "size",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": ["500 ml", "1 L", "5 L"],
+              "type": "string"
+            }
+          },
+          {
+            "name": "inStockOnly",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated active product catalog"
+          },
+          "400": {
+            "description": "Invalid or unknown query parameters"
+          }
+        },
+        "summary": "List active products with filters, sorting, and pagination",
+        "tags": ["products"]
+      }
+    },
+    "/api/products/availability": {
+      "get": {
+        "operationId": "ProductsController_availability",
+        "parameters": [
+          {
+            "name": "variantIds",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Variant availability and max order qty cap"
+          }
+        },
+        "summary": "Fetch live variant availability (no HTTP caching)",
+        "tags": ["products"]
+      }
+    },
+    "/api/products/{slug}": {
+      "get": {
+        "operationId": "ProductsController_getBySlug",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "groundnut-oil",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product detail with variants and current batch"
+          },
+          "404": {
+            "description": "Product not found"
+          }
+        },
+        "summary": "Get active product detail by slug",
+        "tags": ["products"]
+      }
+    },
+    "/api/pincode/{pincode}": {
+      "get": {
+        "operationId": "PincodeController_check",
+        "parameters": [
+          {
+            "name": "pincode",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "600001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uniform serviceability shape for found and unserviceable pincodes"
+          },
+          "400": {
+            "description": "Invalid 6-digit Indian pincode"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        },
+        "summary": "Check pincode serviceability, delivery days, COD, and shipping fee",
+        "tags": ["pincode"]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "operationId": "SettingsController_getPublicSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public store settings"
+          }
+        },
+        "summary": "Get public store info, thresholds, and GST configuration",
+        "tags": ["settings"]
+      }
+    }
+  },
+  "info": {
+    "title": "[YOUR BRAND] Public API",
+    "description": "Single-brand cold-pressed oil storefront & operations API",
+    "version": "0.2.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Liveness and readiness probes"
+    },
+    {
+      "name": "products",
+      "description": "Catalog, product detail, and live availability"
+    },
+    {
+      "name": "pincode",
+      "description": "Delivery serviceability, TAT, COD, and shipping fees"
+    },
+    {
+      "name": "settings",
+      "description": "Public store configuration and thresholds"
+    }
+  ],
+  "servers": [],
+  "components": {
+    "schemas": {}
+  }
+}

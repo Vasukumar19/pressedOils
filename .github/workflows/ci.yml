@@ -31,6 +31,16 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout (full history for migration upgrade check)
         uses: actions/checkout@v4
@@ -119,11 +129,23 @@ jobs:
       - name: Unit tests
         run: pnpm test:ci
 
-      - name: Integration tests (PostgreSQL)
+      - name: Integration & E2E tests (PostgreSQL + Redis)
         env:
           DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/pressedoils_ci?schema=public
           REDIS_URL: redis://localhost:6379
         run: pnpm --filter @pressedoils/api test:integration
+
+      - name: Verify OpenAPI spec matches committed file
+        run: |
+          pnpm --filter @pressedoils/api openapi:generate
+          git diff --exit-code apps/api/openapi.json
+
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: apps/api/openapi.json
+          retention-days: 30
 
       - name: Dependency audit
         run: |
