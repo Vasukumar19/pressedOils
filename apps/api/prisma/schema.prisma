@@ -35,6 +35,7 @@ enum PaymentStatus {
   PENDING
   CAPTURED
   FAILED
+  PARTIALLY_REFUNDED
   REFUNDED
 }
 
@@ -210,6 +211,9 @@ model Order {
   dpdp_policy_version      String?
   marketing_consent        Boolean                  @default(false)
   needs_attention          Boolean                  @default(false)
+  refunded_paise           Int                      @default(0)
+  failed_payment_attempts  Int                      @default(0)
+  checkout_token_hash      String?
   payment_method           PaymentMethod
   payment_status           PaymentStatus            @default(PENDING)
   order_status             OrderStatus              @default(PENDING_PAYMENT)
@@ -221,6 +225,8 @@ model Order {
   items                    OrderItem[]
   events                   OrderEvent[]
   payments                 Payment[]
+  refunds                  Refund[]
+  webhook_events           WebhookEvent[]
   stock_movements          StockMovement[]
   reservations             Reservation[]
   idempotency_keys         CheckoutIdempotencyKey[]
@@ -277,10 +283,51 @@ model Payment {
   created_at         DateTime      @default(now()) @db.Timestamptz(3)
   updated_at         DateTime      @updatedAt @db.Timestamptz(3)
   order              Order         @relation(fields: [order_id], references: [id], onDelete: Restrict)
+  refunds            Refund[]
 
   @@index([order_id])
   @@index([gateway_order_id])
   @@map("payments")
+}
+
+model WebhookEvent {
+  id            String    @id @default(uuid())
+  provider      String
+  event_id      String    @unique
+  event_type    String
+  payload_hash  String
+  order_id      String?
+  status        String
+  raw_payload   Json
+  error_message String?
+  processed_at  DateTime? @db.Timestamptz(3)
+  created_at    DateTime  @default(now()) @db.Timestamptz(3)
+  order         Order?    @relation(fields: [order_id], references: [id], onDelete: SetNull)
+
+  @@index([order_id, created_at])
+  @@index([event_type, created_at])
+  @@map("webhook_events")
+}
+
+model Refund {
+  id                String   @id @default(uuid())
+  order_id          String
+  payment_id        String?
+  gateway_refund_id String?  @unique
+  idempotency_key   String?  @unique
+  amount_paise      Int
+  status            String
+  reason            String
+  initiated_by      String
+  raw_payload       Json?
+  created_at        DateTime @default(now()) @db.Timestamptz(3)
+  updated_at        DateTime @updatedAt @db.Timestamptz(3)
+  order             Order    @relation(fields: [order_id], references: [id], onDelete: Restrict)
+  payment           Payment? @relation(fields: [payment_id], references: [id], onDelete: SetNull)
+
+  @@index([order_id, created_at])
+  @@index([payment_id])
+  @@map("refunds")
 }
 
 model StockMovement {

@@ -291,6 +291,7 @@ async function seedDev() {
         },
       },
       { key: SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION, value: { enabled: true } },
+      { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS, value: { enabled: true } },
     ]
 
     for (const s of defaultSettings) {

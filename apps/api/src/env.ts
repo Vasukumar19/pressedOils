@@ -36,6 +36,7 @@ const envSchema = z
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'silent']).default('info'),
     DATABASE_URL: z.string().url().optional(),
     REDIS_URL: z.string().url().optional(),
+    QUEUE_REDIS_URL: z.string().url().optional(),
     CORS_ORIGINS: corsOriginsSchema,
     TRUST_PROXY: z.string().trim().default('false'),
     MAX_QTY_PER_VARIANT: z.coerce.number().int().min(1).max(50).default(10),
@@ -69,9 +70,21 @@ const envSchema = z
     PICKUP_CODE_HMAC_SECRET: z.string().trim().min(16).optional(),
     PAYMENT_GATEWAY: z.enum(['razorpay', 'mock']).optional(),
     ALLOW_MOCK_GATEWAY: z.enum(['true', 'false']).default('false'),
+    ENABLE_TEMP_ADMIN_API: z.enum(['true', 'false']).default('false'),
+    TEMP_ADMIN_IP_ALLOWLIST: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
     RAZORPAY_KEY_ID: z.string().trim().min(1).optional(),
     RAZORPAY_KEY_SECRET: z.string().trim().min(1).optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+    OWNER_ALERT_EMAIL: z.string().trim().email().optional(),
+    SENTRY_DSN: z.string().trim().url().optional(),
     LEGAL_PRIVACY_VERSION: z.string().trim().min(1).default('2026-11-draft-v1'),
   })
   .transform((data) => ({
@@ -90,12 +103,27 @@ const envSchema = z
       })
     }
 
+    if (isProdTarget && data.ENABLE_TEMP_ADMIN_API === 'true') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ENABLE_TEMP_ADMIN_API'],
+        message: 'Temporary X-Admin-Secret admin endpoints cannot be enabled in production',
+      })
+    }
+
     if (data.APP_ENV === 'production') {
       if (!data.PICKUP_CODE_HMAC_SECRET) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['PICKUP_CODE_HMAC_SECRET'],
           message: 'PICKUP_CODE_HMAC_SECRET is required in production',
+        })
+      }
+      if (!data.RAZORPAY_WEBHOOK_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RAZORPAY_WEBHOOK_SECRET'],
+          message: 'RAZORPAY_WEBHOOK_SECRET is required in production',
         })
       }
     }
@@ -139,6 +167,13 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ['REDIS_URL'],
           message: 'REDIS_URL is required outside of test mode',
+        })
+      }
+      if (!data.QUEUE_REDIS_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['QUEUE_REDIS_URL'],
+          message: 'QUEUE_REDIS_URL is required outside of test mode',
         })
       }
     }
