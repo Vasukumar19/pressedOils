@@ -23,13 +23,13 @@ _No owner actions required for Phase 0._
 
 - [ ] Finalise the six product names, descriptions, "best for" lines and origin regions.
 - [ ] Set real prices and MRP (in rupees) for each of the three sizes per product.
-- [ ] Supply product photography for each product and each size variant.
-- [ ] Confirm Tamil/regional language lines for each product.
+- [ ] Supply product photography for each product (uploaded to object storage via Admin; never `/placeholders/`).
+- [ ] Create the real six products and variants in the Admin UI (`bootstrap:prod` creates an empty catalog).
 
 ### Batches & lab reports
 
-- [ ] Supply first batch numbers, pressing dates and best-before dates.
-- [ ] Upload lab report PDFs for each batch (or confirm placeholder URL structure).
+- [ ] Supply first batch numbers, pressing dates and best-before dates (exactly one current batch per product).
+- [ ] Upload lab report PDFs (to object storage with checksum) for each batch.
 
 ### Legal & compliance
 
@@ -63,7 +63,8 @@ _No owner actions required for Phase 0._
 
 ### Admin access
 
-- [ ] Confirm the owner admin email address(es) for initial account creation.
+- [ ] Confirm the owner admin email address for `bootstrap:prod` initial account creation (`BOOTSTRAP_ADMIN_EMAIL`).
+- [ ] Log in as the owner admin on first deploy and set a strong password (`must_set_password` flag).
 - [ ] Set up TOTP 2FA on the admin account before going live.
 
 ### Founder story

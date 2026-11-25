@@ -5,7 +5,6 @@ export interface Product {
   id: string
   index: string
   name: string
-  native: string
   use: string
   region: string
   image: string
@@ -20,7 +19,6 @@ export const PRODUCTS: Product[] = [
     id: 'groundnut',
     index: '01',
     name: 'Groundnut oil',
-    native: 'கடலை எண்ணெய்',
     use: 'Everyday frying & savoury cooking',
     region: '[REGION]',
     image: '/images/product-groundnut.png',
@@ -32,7 +30,6 @@ export const PRODUCTS: Product[] = [
     id: 'sesame',
     index: '02',
     name: 'Sesame oil',
-    native: 'நல்லெண்ணெய்',
     use: 'Tempering, pickles & finishing',
     region: '[REGION]',
     image: '/images/product-sesame.png',
@@ -44,7 +41,6 @@ export const PRODUCTS: Product[] = [
     id: 'coconut',
     index: '03',
     name: 'Coconut oil',
-    native: 'தேங்காய் எண்ணெய்',
     use: 'Fragrant curries & festival cooking',
     region: '[REGION]',
     image: '/images/product-coconut.png',

@@ -18,7 +18,6 @@
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
-  --font-tamil: var(--font-tamil), var(--font-inter), sans-serif;
 
   --animate-marquee: marquee 42s linear infinite;
   --animate-float: float 8s ease-in-out infinite;

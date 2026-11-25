@@ -1,6 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Cormorant_Garamond, Inter, Noto_Sans_Tamil } from 'next/font/google'
+import { Cormorant_Garamond, Inter } from 'next/font/google'
 import './globals.css'
 
 const serif = Cormorant_Garamond({
@@ -14,13 +14,6 @@ const serif = Cormorant_Garamond({
 const sans = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
-  display: 'swap',
-})
-
-const tamil = Noto_Sans_Tamil({
-  subsets: ['tamil'],
-  weight: ['400', '500'],
-  variable: '--font-tamil',
   display: 'swap',
 })
 
@@ -43,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${serif.variable} ${sans.variable} ${tamil.variable}`}>
+    <html lang="en" className={`${serif.variable} ${sans.variable}`}>
       <body className="antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

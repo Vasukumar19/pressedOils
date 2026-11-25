@@ -41,9 +41,13 @@ repo root (pnpm + Turborepo monorepo)
 
 ---
 
-## Six placeholder products
+## Six placeholder products (dev & staging only)
 
-> All data lives in `apps/api/prisma/seed.ts` **only**. Never hard-code in components.
+> Sample products and placeholder images live in `apps/api/prisma/seed.dev.ts` and `apps/web/public/placeholders/` **only** for development and staging. They **never** go into the production database, and the production web build must not serve `/placeholders/`.
+>
+> - `seed:dev`: creates the six sample products and placeholder images (refuses to run when `NODE_ENV=production` or when `DATABASE_URL` / `IS_PRODUCTION_DB` indicates production).
+> - `bootstrap:prod`: creates only the first owner admin account (owner sets password on first login), default settings, and empty product tables.
+> - Production activation rule: API refuses `is_active = true` unless the product has a real non-`/placeholders/` image, price > 0, stock set, and an assigned active batch.
 
 1. Groundnut Oil
 2. Sesame (Gingelly) Oil
@@ -63,25 +67,25 @@ See the full schema specification in `docs/BRIEF.md` (this file, section below).
 
 ### Tables
 
-| Table                  | Key columns                                                                                                                                                                                                |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `products`             | id, slug, name, description, best_for, origin_region, is_active, sort_order, brand                                                                                                                         |
-| `product_images`       | id, product_id, url, alt, sort_order                                                                                                                                                                       |
-| `variants`             | id, product_id, sku, size_label, price_paise, mrp_paise, stock, reserved, low_stock_threshold, is_active                                                                                                   |
-| `batches`              | id, variant_id/product_id, batch_no, pressed_on, best_before, lab_report_url, lab_tested_on                                                                                                                |
-| `customers`            | id, name, phone (unique), email, created_at                                                                                                                                                                |
-| `addresses`            | id, customer_id, name, phone, line1, line2, city, state, pincode                                                                                                                                           |
-| `orders`               | id, order_number (human-readable, unique), customer_id, address snapshot, subtotal_paise, shipping_paise, discount_paise, tax_paise, total_paise, payment_method, payment_status, order_status, created_at |
-| `order_items`          | id, order_id, variant_id, batch_id, product_name_snapshot, size_snapshot, qty, unit_price_paise                                                                                                            |
-| `order_events`         | id, order_id, status, note, actor, created_at                                                                                                                                                              |
-| `payments`             | id, order_id, gateway, gateway_order_id, gateway_payment_id (unique), amount_paise, status, raw_payload, created_at                                                                                        |
-| `stock_movements`      | id, variant_id, delta, reason, order_id (nullable), actor, created_at                                                                                                                                      |
-| `reservations`         | id, order_id, variant_id, qty, expires_at, status                                                                                                                                                          |
-| `coupons`              | id, code (unique), type (percent/flat), value, min_order_paise, expires_at, usage_limit, used_count, is_active                                                                                             |
-| `serviceable_pincodes` | pincode, city, state, delivery_days, cod_allowed, shipping_paise                                                                                                                                           |
-| `settings`             | key, value                                                                                                                                                                                                 |
-| `admins`               | id, email, password_hash, role, totp_secret, is_active                                                                                                                                                     |
-| `audit_logs`           | id, admin_id, action, entity, entity_id, before, after, created_at                                                                                                                                         |
+| Table                  | Key columns                                                                                                                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `products`             | id, slug, name, description, best_for, origin_region, is_active, sort_order, brand                                                                                                                                                                                                   |
+| `product_images`       | id, product_id, url, alt, sort_order                                                                                                                                                                                                                                                 |
+| `variants`             | id, product_id, sku, size_label, price_paise, mrp_paise, stock, reserved, low_stock_threshold, is_active                                                                                                                                                                             |
+| `batches`              | id, product_id (required, RESTRICT), variant_id (optional, RESTRICT), batch_no (unique per product), pressed_on (Date), best_before (Date), lab_report_url, lab_report_key, lab_report_checksum, lab_tested_on (Date), is_current (partial unique per product), is_active, locked_at |
+| `customers`            | id, name, phone (unique), email, created_at                                                                                                                                                                                                                                          |
+| `addresses`            | id, customer_id, name, phone, line1, line2, city, state, pincode                                                                                                                                                                                                                     |
+| `orders`               | id, order_number (human-readable, unique), customer_id, address snapshot, subtotal_paise, shipping_paise, discount_paise, tax_paise, total_paise, payment_method, payment_status, order_status, created_at                                                                           |
+| `order_items`          | id, order_id, variant_id, batch_id, product_name_snapshot, size_snapshot, qty, unit_price_paise                                                                                                                                                                                      |
+| `order_events`         | id, order_id, status, note, actor, created_at                                                                                                                                                                                                                                        |
+| `payments`             | id, order_id, gateway, gateway_order_id, gateway_payment_id (unique), amount_paise, status, raw_payload, created_at                                                                                                                                                                  |
+| `stock_movements`      | id, variant_id, delta, reason, order_id (nullable), actor, created_at                                                                                                                                                                                                                |
+| `reservations`         | id, order_id, variant_id, qty, expires_at, status                                                                                                                                                                                                                                    |
+| `coupons`              | id, code (unique), type (percent/flat), value, min_order_paise, expires_at, usage_limit, used_count, is_active                                                                                                                                                                       |
+| `serviceable_pincodes` | pincode, city, state, delivery_days, cod_allowed, shipping_paise                                                                                                                                                                                                                     |
+| `settings`             | key, value                                                                                                                                                                                                                                                                           |
+| `admins`               | id, email, password_hash, role, totp_secret, is_active                                                                                                                                                                                                                               |
+| `audit_logs`           | id, admin_id, action, entity, entity_id, before, after, created_at                                                                                                                                                                                                                   |
 
 ### Order status flow
 
@@ -113,7 +117,10 @@ Every transition writes an `order_events` row and enqueues a notification.
 ## Engineering standards
 
 - TypeScript strict mode, ESLint, Prettier, Husky pre-commit, conventional commits.
-- Database changes via Prisma migrations only.
+- Database changes via Prisma migrations only (PostgreSQL 16).
+  - Production runs **only** `prisma migrate deploy` (never `migrate dev` or `db push`).
+  - Migrations are forward-only and backward-compatible with the previous app version (add first, switch code, remove later).
+  - Take a verified backup before every production migration; run migrations as a single, locked deploy step.
 - Automated tests required for every money or stock path before a phase is "done".
 - Animations: respect `prefers-reduced-motion`; lazy-load GSAP and heavy components; show entrance
   curtain once per session; never block content or SEO.
@@ -134,8 +141,7 @@ Only create new components if nothing existing fits.
 
 - **Headings:** Cormorant Garamond (weights 300–600, normal and italic)
 - **Body / UI:** Inter
-- **Regional script:** Noto Sans Tamil
-- **No new families. No new weights.**
+- **No new families. No new weights.** (Native names and regional script fonts were removed.)
 
 ### 3. Colours and tokens
 

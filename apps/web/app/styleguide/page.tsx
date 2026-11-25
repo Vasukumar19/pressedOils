@@ -106,12 +106,6 @@ export default function StyleguidePage() {
               Section label
             </p>
           </div>
-          <div>
-            <p className="text-sage mb-2 font-mono text-xs">{fonts.tamil} — Tamil script</p>
-            <p lang="ta" className="font-tamil text-sage text-xl">
-              கடலை எண்ணெய் · நல்லெண்ணெய் · தேங்காய் எண்ணெய்
-            </p>
-          </div>
         </div>
       </Section>
 
@@ -204,7 +198,7 @@ export default function StyleguidePage() {
           </li>
           <li>
             <strong className="text-forest">
-              Fonts: Cormorant Garamond (headings), Inter (body), Noto Sans Tamil (regional).
+              Fonts: Cormorant Garamond (headings), Inter (body).
             </strong>{' '}
             No new families. No new weights beyond those already loaded.
           </li>

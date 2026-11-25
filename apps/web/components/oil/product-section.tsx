@@ -127,9 +127,6 @@ function ProductCard({
 
       <div className="mt-6">
         <h3 className="text-forest font-serif text-4xl leading-none">{product.name}</h3>
-        <p lang="ta" className="font-tamil text-sage mt-2 text-base">
-          {product.native}
-        </p>
         <p className="text-ink/85 mt-4 text-[15px]">{product.use}</p>
         <p className="text-sage mt-1 text-[13px]">
           Grown in <span className="ph">{product.region}</span>
@@ -204,9 +201,6 @@ function ProductPreview({ product, onClose }: { product: Product; onClose: () =>
         <div className="p-7 md:p-10">
           <p className="text-sage font-mono text-xs tracking-widest">PRODUCT {product.index}</p>
           <h3 className="text-forest mt-3 font-serif text-5xl leading-none">{product.name}</h3>
-          <p lang="ta" className="font-tamil text-sage mt-2 text-base">
-            {product.native}
-          </p>
           <p className="text-ink/85 mt-6 text-[15px] leading-relaxed">{product.use}</p>
           <p className="text-sage mt-1 text-[13px]">
             Grown in <span className="ph">{product.region}</span>

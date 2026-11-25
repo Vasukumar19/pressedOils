@@ -44,8 +44,6 @@ export const fonts = {
   serif: 'Cormorant Garamond',
   /** Body text, UI labels, navigation */
   sans: 'Inter',
-  /** Tamil / regional script lines */
-  tamil: 'Noto Sans Tamil',
 } as const
 
 export const motion = {
