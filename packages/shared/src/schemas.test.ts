@@ -325,4 +325,16 @@ describe('order status transitions and checkout validation', () => {
     // 20:00 UTC on Nov 25 is 01:30 IST on Nov 26
     expect(getIndiaDateYYMMDD(new Date('2026-11-25T20:00:00.000Z'))).toBe('261126')
   })
+
+  it('parses optional phoneVerificationToken on checkoutRequestSchema for COD flows', () => {
+    const withToken = checkoutRequestSchema.parse({
+      contact: { name: 'Asha', phone: '9876543210' },
+      fulfilmentMethod: 'STORE_PICKUP',
+      items: [{ variantId: '550e8400-e29b-41d4-a716-446655440000', qty: 1 }],
+      paymentMethod: 'COD',
+      phoneVerificationToken: 'tok_verified_phone_123456',
+      dpdpConsent: true,
+    })
+    expect(withToken.phoneVerificationToken).toBe('tok_verified_phone_123456')
+  })
 })

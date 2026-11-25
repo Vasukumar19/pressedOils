@@ -80,6 +80,8 @@ export const apiErrorResponseSchema = z
     statusCode: z.number().int(),
     error: z.string(),
     message: z.string(),
+    code: z.string().optional(),
+    captchaRequired: z.boolean().optional(),
     details: z.unknown().optional(),
     requestId: z.string(),
     timestamp: z.string(),

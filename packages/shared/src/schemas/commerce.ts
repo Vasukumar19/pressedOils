@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { CURRENCY, DEFAULT_MAX_QTY_PER_VARIANT } from '../constants'
+import { ALERT_SEVERITY, CURRENCY, DEFAULT_MAX_QTY_PER_VARIANT, OTP_PURPOSE } from '../constants'
 import { COUPON_TYPE, FULFILMENT_METHOD, PAYMENT_METHOD } from '../enums'
 import { indianPhoneSchema, indianPincodeSchema, paiseSchema, positivePaiseSchema } from './common'
 
@@ -211,6 +211,7 @@ export const checkoutRequestSchema = z
     pickupLocationId: z.string().uuid().optional(),
     items: z.array(cartItemInputSchema).min(1).max(50),
     paymentMethod: z.enum([PAYMENT_METHOD.ONLINE, PAYMENT_METHOD.COD]),
+    phoneVerificationToken: z.string().trim().min(16).max(256).optional(),
     couponCode: z.string().trim().toUpperCase().max(32).optional(),
     dpdpConsent: z.literal(true, {
       errorMap: () => ({ message: 'Privacy policy consent is required to place an order' }),
@@ -553,6 +554,157 @@ export const adminReturnStockResponseSchema = z
 
 export type AdminReturnStockResponseDto = z.infer<typeof adminReturnStockResponseSchema>
 
+export const otpPurposeSchema = z.enum([
+  OTP_PURPOSE.COD_CHECKOUT,
+  OTP_PURPOSE.ORDER_TRACKING,
+  OTP_PURPOSE.PICKUP_CODE_REISSUE,
+])
+
+export const otpSendRequestSchema = z
+  .object({
+    phone: indianPhoneSchema,
+    purpose: otpPurposeSchema,
+    turnstileToken: z.string().trim().min(1).max(2048).optional(),
+  })
+  .strict()
+
+export type OtpSendRequestDto = z.infer<typeof otpSendRequestSchema>
+
+export const otpSendResponseSchema = z
+  .object({
+    challengeId: z.string().uuid(),
+    maskedPhone: z.string().min(4),
+    expiresAt: z.string(),
+    resendAvailableAt: z.string(),
+    captchaRequired: z.boolean(),
+  })
+  .strict()
+
+export type OtpSendResponseDto = z.infer<typeof otpSendResponseSchema>
+
+export const otpVerifyRequestSchema = z
+  .object({
+    challengeId: z.string().uuid(),
+    phone: indianPhoneSchema,
+    code: z
+      .string()
+      .trim()
+      .regex(/^\d{6}$/, 'Enter the 6-digit verification code'),
+    purpose: otpPurposeSchema,
+  })
+  .strict()
+
+export type OtpVerifyRequestDto = z.infer<typeof otpVerifyRequestSchema>
+
+export const otpVerifyResponseSchema = z
+  .object({
+    verified: z.literal(true),
+    verificationToken: z.string().min(16),
+    expiresAt: z.string(),
+  })
+  .strict()
+
+export type OtpVerifyResponseDto = z.infer<typeof otpVerifyResponseSchema>
+
+export const pickupCodeReissueRequestSchema = z
+  .object({
+    orderNumber: z
+      .string()
+      .trim()
+      .regex(/^ORD-\d{6}-[2-9A-HJ-NP-Z]{5}$/),
+    phone: indianPhoneSchema,
+    verificationToken: z.string().trim().min(16).max(256),
+  })
+  .strict()
+
+export type PickupCodeReissueRequestDto = z.infer<typeof pickupCodeReissueRequestSchema>
+
+export const pickupCodeReissueResponseSchema = z
+  .object({
+    orderNumber: z.string(),
+    sent: z.literal(true),
+    maskedPhone: z.string(),
+    maskedEmail: z.string().nullable(),
+    lastCollectionDate: z.string(),
+  })
+  .strict()
+
+export type PickupCodeReissueResponseDto = z.infer<typeof pickupCodeReissueResponseSchema>
+
+export const adminPackOrderSchema = z
+  .object({
+    note: z.string().trim().min(2).max(300).optional(),
+  })
+  .strict()
+
+export type AdminPackOrderDto = z.infer<typeof adminPackOrderSchema>
+
+export const adminShipOrderSchema = z
+  .object({
+    trackingUrl: z.string().trim().url().max(500).optional(),
+    note: z.string().trim().min(2).max(300).optional(),
+  })
+  .strict()
+
+export type AdminShipOrderDto = z.infer<typeof adminShipOrderSchema>
+
+export const adminPickupCompleteSchema = z
+  .object({
+    pickupCode: z
+      .string()
+      .trim()
+      .regex(/^\d{6}$/)
+      .optional(),
+    photoIdFallbackNote: z.string().trim().min(5).max(300).optional(),
+  })
+  .strict()
+  .refine(
+    (v) => Boolean(v.pickupCode || v.photoIdFallbackNote),
+    'Either 6-digit pickupCode or photoIdFallbackNote is required',
+  )
+
+export type AdminPickupCompleteDto = z.infer<typeof adminPickupCompleteSchema>
+
+export const adminOrderTransitionResponseSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    orderNumber: z.string(),
+    orderStatus: z.enum(['PACKED', 'SHIPPED', 'DELIVERED', 'READY_FOR_PICKUP', 'PICKED_UP']),
+    trackingUrl: z.string().nullable().optional(),
+    lastCollectionDate: z.string().nullable().optional(),
+  })
+  .strict()
+
+export type AdminOrderTransitionResponseDto = z.infer<typeof adminOrderTransitionResponseSchema>
+
+export const adminTestAlertSchema = z
+  .object({
+    severity: z
+      .enum([ALERT_SEVERITY.INFO, ALERT_SEVERITY.WARNING, ALERT_SEVERITY.CRITICAL])
+      .default(ALERT_SEVERITY.WARNING),
+    message: z.string().trim().min(5).max(400).optional(),
+  })
+  .strict()
+
+export type AdminTestAlertDto = z.infer<typeof adminTestAlertSchema>
+
+export const adminTestAlertResponseSchema = z
+  .object({
+    sent: z.literal(true),
+    severity: z.enum([ALERT_SEVERITY.INFO, ALERT_SEVERITY.WARNING, ALERT_SEVERITY.CRITICAL]),
+    alertKey: z.string(),
+    channels: z.object({
+      log: z.literal(true),
+      emailRecipients: z.number().int().nonnegative(),
+      smsRecipients: z.number().int().nonnegative(),
+      externalWebhook: z.boolean(),
+      sentry: z.boolean(),
+    }),
+  })
+  .strict()
+
+export type AdminTestAlertResponseDto = z.infer<typeof adminTestAlertResponseSchema>
+
 export const publicSettingsResponseSchema = z
   .object({
     brandName: z.string().min(1),
@@ -572,6 +724,8 @@ export const publicSettingsResponseSchema = z
     legalPagesApproved: z.boolean(),
     dpdpPolicyVersion: z.string().min(1),
     autoConfirmPaidOrders: z.boolean(),
+    smsOtpReady: z.boolean().default(true),
+    turnstileSiteKey: z.string().nullable().default(null),
     checkoutEnabled: z.boolean(),
     paymentGateway: z.enum(['razorpay', 'mock']),
     fssaiNumber: z.string().min(1),
