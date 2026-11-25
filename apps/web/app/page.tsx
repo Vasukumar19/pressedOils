@@ -42,6 +42,7 @@ export default async function Page() {
       <MotionProvider brandName={settings.brandName}>
         <Navbar
           brandName={settings.brandName}
+          freeShippingEnabled={settings.freeShippingEnabled}
           freeShippingThresholdPaise={settings.freeShippingThresholdPaise}
         />
         <main>

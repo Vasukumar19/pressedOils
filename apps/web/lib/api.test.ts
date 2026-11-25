@@ -4,6 +4,7 @@ import {
   fetchLiveAvailability,
   fetchPublicProductBySlug,
   fetchPublicProducts,
+  validateCartOnServer,
 } from './api'
 
 describe('storefront API client', () => {
@@ -64,6 +65,66 @@ describe('storefront API client', () => {
     expect(spy).toHaveBeenCalledWith(
       expect.stringContaining('/products/availability?variantIds='),
       expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('validates cart on server, forwards X-Cart-Session token, and surfaces API error messages', async () => {
+    const validResponse = {
+      items: [],
+      fulfilmentMethod: 'DELIVERY',
+      pickup: null,
+      pincode: null,
+      coupon: null,
+      freeShipping: null,
+      tax: { showTaxBreakdown: false },
+      summary: {
+        itemsSubtotalPaise: 0,
+        discountPaise: 0,
+        netItemsTotalPaise: 0,
+        shippingPaise: null,
+        shippingStatus: 'ENTER_PINCODE',
+        taxAddedPaise: 0,
+        totalPaise: 0,
+        totalLabel: 'Items total',
+        canCheckout: false,
+      },
+      maxOrderQtyPerVariant: 10,
+    }
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(validResponse), {
+          status: 200,
+          headers: { 'x-cart-session': 'sess-123.sig' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ message: 'Too many invalid coupon attempts. Please try again later.' }),
+          { status: 429 },
+        ),
+      )
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ok = await validateCartOnServer(
+      { items: [], fulfilmentMethod: 'DELIVERY' },
+      { sessionToken: 'prev.tok' },
+    )
+    expect(ok.nextSessionToken).toBe('sess-123.sig')
+    expect(ok.data.summary.totalLabel).toBe('Items total')
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/cart/validate'),
+      expect.objectContaining({
+        method: 'POST',
+        cache: 'no-store',
+        headers: expect.objectContaining({ 'X-Cart-Session': 'prev.tok' }),
+      }),
+    )
+
+    await expect(validateCartOnServer({ items: [], fulfilmentMethod: 'DELIVERY' })).rejects.toThrow(
+      /Too many invalid coupon attempts/,
     )
   })
 })

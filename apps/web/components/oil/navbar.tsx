@@ -10,14 +10,18 @@ import { useCart } from '@/lib/cart'
 import { cn } from '@/lib/utils'
 
 interface AnnouncementBarProps {
-  freeShippingThresholdPaise: number
+  freeShippingEnabled: boolean
+  freeShippingThresholdPaise: number | null
 }
 
-function AnnouncementBar({ freeShippingThresholdPaise }: AnnouncementBarProps) {
+function AnnouncementBar({
+  freeShippingEnabled,
+  freeShippingThresholdPaise,
+}: AnnouncementBarProps) {
   return (
     <div className="bg-gold text-forest px-4 py-2 text-center text-[11px] leading-relaxed font-semibold tracking-[0.16em] uppercase md:text-xs md:tracking-[0.2em]">
       <span>
-        {freeShippingThresholdPaise > 0
+        {freeShippingEnabled && freeShippingThresholdPaise !== null
           ? `Free shipping above ${formatPaiseToInr(freeShippingThresholdPaise)}`
           : 'Small-batch cold-pressed oils'}
       </span>
@@ -31,18 +35,26 @@ function AnnouncementBar({ freeShippingThresholdPaise }: AnnouncementBarProps) {
 
 interface NavbarProps {
   brandName?: string
-  freeShippingThresholdPaise?: number
+  freeShippingEnabled?: boolean
+  freeShippingThresholdPaise?: number | null
 }
 
 export function Navbar({
   brandName = '[YOUR BRAND]',
+  freeShippingEnabled: enabledProp,
   freeShippingThresholdPaise: thresholdProp,
 }: NavbarProps) {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const pathname = usePathname()
-  const { count, setOpen, freeShippingThresholdPaise: contextThreshold } = useCart()
-  const threshold = thresholdProp ?? contextThreshold
+  const {
+    count,
+    setOpen,
+    freeShippingEnabled: contextEnabled,
+    freeShippingThresholdPaise: contextThreshold,
+  } = useCart()
+  const freeShippingEnabled = enabledProp ?? contextEnabled
+  const threshold = thresholdProp !== undefined ? thresholdProp : contextThreshold
 
   const isHome = pathname === '/'
   const links = [
@@ -74,7 +86,10 @@ export function Navbar({
           scrolled ? 'max-h-0' : 'max-h-20',
         )}
       >
-        <AnnouncementBar freeShippingThresholdPaise={threshold} />
+        <AnnouncementBar
+          freeShippingEnabled={freeShippingEnabled}
+          freeShippingThresholdPaise={threshold}
+        />
       </div>
       <nav
         aria-label="Primary"

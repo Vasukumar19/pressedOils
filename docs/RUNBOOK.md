@@ -38,6 +38,7 @@
 - Always set `TRUST_PROXY` explicitly to match deployment topology (e.g. `1` behind a single load balancer, or exact proxy count/subnet). Never trust arbitrary `X-Forwarded-For` headers directly.
 - Public rate limit default: `120 req/min` per client IP.
 - `GET /api/pincode/:pincode`: `20 req/min` per client IP.
+- `POST /api/cart/validate`: `60 req/min` per signed `X-Cart-Session` (or per IP if unauthenticated) within a `300 req/min` CG-NAT-friendly per-IP ceiling. Invalid coupon guesses cap at `10 / 15 min` per IP and per session (falls back to in-memory if Redis degrades).
 
 ---
 

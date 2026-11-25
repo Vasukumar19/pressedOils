@@ -74,6 +74,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       />
       <Navbar
         brandName={settings.brandName}
+        freeShippingEnabled={settings.freeShippingEnabled}
         freeShippingThresholdPaise={settings.freeShippingThresholdPaise}
       />
       <main className="bg-ivory text-ink min-h-[100svh] pt-32 pb-24 md:pt-40">
@@ -109,7 +110,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 <ProductPurchase product={product} showMaxNote />
               </div>
 
-              {settings.freeShippingThresholdPaise > 0 ? (
+              {settings.freeShippingEnabled && settings.freeShippingThresholdPaise !== null ? (
                 <p className="text-sage mt-6 text-xs leading-relaxed">
                   {startingPricePaise >= settings.freeShippingThresholdPaise
                     ? 'This bottle qualifies for complimentary delivery.'

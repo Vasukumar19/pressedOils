@@ -37,6 +37,12 @@ describe('cart:v2 storage validation and item mutations', () => {
     expect(
       parseStoredCart(JSON.stringify([{ variantId: VAR_A, qty: 1, unitPricePaise: 99999 }]), 10),
     ).toEqual({ items: [], discarded: true })
+    expect(
+      parseStoredCart(
+        JSON.stringify([{ variantId: VAR_A, qty: 2, discountPaise: 50000, price: 1 }]),
+        10,
+      ),
+    ).toEqual({ items: [], discarded: true })
     expect(parseStoredCart(JSON.stringify([{ variantId: VAR_A, qty: 11 }]), 10)).toEqual({
       items: [],
       discarded: true,

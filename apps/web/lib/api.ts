@@ -1,4 +1,7 @@
 import {
+  type CartValidateRequest,
+  cartValidateResponseSchema,
+  type CartValidateResponseDto,
   DEFAULT_MAX_QTY_PER_VARIANT,
   pincodeLookupResponseSchema,
   type PincodeLookupResponseDto,
@@ -180,4 +183,43 @@ export async function lookupServiceablePincode(
   }
   const json: unknown = await res.json()
   return pincodeLookupResponseSchema.parse(json)
+}
+
+export async function validateCartOnServer(
+  payload: CartValidateRequest,
+  options: { sessionToken?: string; signal?: AbortSignal } = {},
+): Promise<{ data: CartValidateResponseDto; nextSessionToken: string | null }> {
+  const url = `${getPublicApiBaseUrl()}/cart/validate`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(options.sessionToken ? { 'X-Cart-Session': options.sessionToken } : {}),
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    signal: options.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+
+  const nextSessionToken = res.headers.get('x-cart-session')
+
+  if (!res.ok) {
+    let message = `Unable to validate bag (${res.status})`
+    try {
+      const errBody = (await res.json()) as { message?: string }
+      if (typeof errBody?.message === 'string' && errBody.message.trim()) {
+        message = errBody.message
+      }
+    } catch {
+      // Fall back to generic status message
+    }
+    throw new ApiRequestError(message, res.status, url)
+  }
+
+  const json: unknown = await res.json()
+  return {
+    data: cartValidateResponseSchema.parse(json),
+    nextSessionToken,
+  }
 }

@@ -12,17 +12,23 @@ import {
 } from 'react'
 import {
   DEFAULT_MAX_QTY_PER_VARIANT,
+  FULFILMENT_METHOD,
   publicProductListResponseSchema,
+  type CartValidateResponseDto,
+  type FulfilmentMethod,
+  type PickupLocationPublicDto,
   type PublicProductDto,
   type PublicSettingsResponseDto,
   type PublicVariantAvailabilityDto,
   type PublicVariantDto,
 } from '@pressedoils/shared'
 import { z } from 'zod'
+import { validateCartOnServer } from './api'
 import { getPublicApiBaseUrl } from './env'
 import { buildAvailabilityMapFromProducts, useLiveAvailability } from './use-live-availability'
 
 export const CART_STORAGE_KEY = 'cart:v2' as const
+export const CART_SESSION_STORAGE_KEY = 'cart:session' as const
 
 export interface CartStoredItem {
   variantId: string
@@ -164,7 +170,27 @@ interface CartContextValue {
   getVariantAvailability: (variant: PublicVariantDto) => PublicVariantAvailabilityDto
   getVariantQty: (variantId: string) => number
   maxOrderQtyPerVariant: number
-  freeShippingThresholdPaise: number
+  freeShippingEnabled: boolean
+  freeShippingThresholdPaise: number | null
+  storePickupEnabled: boolean
+  pickupLocations: PickupLocationPublicDto[]
+  fulfilmentMethod: FulfilmentMethod
+  setFulfilmentMethod: (method: FulfilmentMethod) => void
+  pickupLocationId: string | undefined
+  setPickupLocationId: (id: string) => void
+  pincode: string
+  setPincode: (pincode: string) => void
+  couponCode: string
+  setCouponCode: (code: string) => void
+  validation: CartValidateResponseDto | null
+  isValidating: boolean
+  validateError: string | null
+  revalidateCartNow: (overrides?: {
+    couponCode?: string
+    pincode?: string
+    fulfilmentMethod?: FulfilmentMethod
+    pickupLocationId?: string
+  }) => Promise<void>
   hasUnresolvedItems: boolean
   refreshAvailability: () => Promise<void>
 }
@@ -198,6 +224,8 @@ interface CartProviderProps {
   initialSettings?: PublicSettingsResponseDto
 }
 
+const VALIDATE_DEBOUNCE_MS = 350
+
 export function CartProvider({
   children,
   initialProducts = [],
@@ -210,7 +238,27 @@ export function CartProvider({
   const [catalogMap, setCatalogMap] = useState<Record<string, CatalogVariantEntry>>(() =>
     indexCatalogProducts(initialProducts),
   )
+  const [fulfilmentMethod, setFulfilmentMethod] = useState<FulfilmentMethod>(
+    FULFILMENT_METHOD.DELIVERY,
+  )
+  const [pickupLocationId, setPickupLocationId] = useState<string | undefined>(
+    () => initialSettings?.pickupLocations[0]?.id,
+  )
+  const [pincode, setPincode] = useState('')
+  const [couponCode, setCouponCode] = useState('')
+  const [validation, setValidation] = useState<CartValidateResponseDto | null>(null)
+  const [isValidating, setIsValidating] = useState(false)
+  const [validateError, setValidateError] = useState<string | null>(null)
   const hydratedCatalogRef = useRef(false)
+  const validateControllerRef = useRef<AbortController | null>(null)
+
+  const storePickupEnabled = Boolean(
+    initialSettings?.storePickupEnabled && (initialSettings?.pickupLocations.length ?? 0) > 0,
+  )
+  const pickupLocations = useMemo(
+    () => (storePickupEnabled ? (initialSettings?.pickupLocations ?? []) : []),
+    [initialSettings?.pickupLocations, storePickupEnabled],
+  )
 
   const registerProducts = useCallback((products: readonly PublicProductDto[]) => {
     if (products.length === 0) return
@@ -253,7 +301,7 @@ export function CartProvider({
     return () => window.removeEventListener('storage', onStorage)
   }, [configuredMaxQty])
 
-  // Hydrate catalog names and prices from the public API if cart has any variant not yet indexed
+  // Hydrate catalog names/images if cart contains any variant not yet indexed
   useEffect(() => {
     if (!hydrated || hydratedCatalogRef.current) return
     const missingVariant = items.some((item) => !catalogMap[item.variantId])
@@ -276,7 +324,7 @@ export function CartProvider({
         }
       })
       .catch(() => {
-        // Ignore transient hydration failure; user can retry or refresh page
+        // Ignore transient hydration errors
       })
 
     return () => controller.abort()
@@ -295,7 +343,7 @@ export function CartProvider({
 
   const {
     availabilityMap,
-    maxOrderQtyPerVariant,
+    maxOrderQtyPerVariant: liveMaxQty,
     refresh: refreshAvailability,
   } = useLiveAvailability(trackedVariantIds, {
     initialMap: initialAvailabilityMap,
@@ -303,11 +351,7 @@ export function CartProvider({
     enabled: hydrated,
   })
 
-  // Refresh availability whenever drawer opens with items
-  useEffect(() => {
-    if (!isOpen || items.length === 0) return
-    void refreshAvailability()
-  }, [isOpen, items.length, refreshAvailability])
+  const maxOrderQtyPerVariant = validation?.maxOrderQtyPerVariant ?? liveMaxQty
 
   const persistItems = useCallback(
     (next: CartStoredItem[]) => {
@@ -318,11 +362,141 @@ export function CartProvider({
           serializeStoredCart(next, maxOrderQtyPerVariant),
         )
       } catch {
-        // Ignore quota / private browsing errors
+        // Ignore storage error
       }
     },
     [maxOrderQtyPerVariant],
   )
+
+  const runServerValidation = useCallback(
+    async (overrides?: {
+      items?: CartStoredItem[]
+      couponCode?: string
+      pincode?: string
+      fulfilmentMethod?: FulfilmentMethod
+      pickupLocationId?: string
+    }) => {
+      const targetItems = overrides?.items ?? items
+      if (targetItems.length === 0) {
+        setValidation(null)
+        setValidateError(null)
+        return
+      }
+
+      validateControllerRef.current?.abort()
+      const controller = new AbortController()
+      validateControllerRef.current = controller
+      setIsValidating(true)
+      setValidateError(null)
+
+      const activeCoupon = (overrides?.couponCode ?? couponCode).trim().toUpperCase()
+      const activePincode = (overrides?.pincode ?? pincode).trim()
+      const activeFulfilment = storePickupEnabled
+        ? (overrides?.fulfilmentMethod ?? fulfilmentMethod)
+        : FULFILMENT_METHOD.DELIVERY
+      const activePickupId = overrides?.pickupLocationId ?? pickupLocationId
+
+      let sessionToken: string | undefined
+      try {
+        sessionToken = window.localStorage.getItem(CART_SESSION_STORAGE_KEY) ?? undefined
+      } catch {
+        sessionToken = undefined
+      }
+
+      try {
+        const result = await validateCartOnServer(
+          {
+            items: targetItems,
+            fulfilmentMethod: activeFulfilment,
+            ...(activeCoupon ? { couponCode: activeCoupon } : {}),
+            ...(activeFulfilment === FULFILMENT_METHOD.DELIVERY &&
+            /^[1-9][0-9]{5}$/.test(activePincode)
+              ? { pincode: activePincode }
+              : {}),
+            ...(activeFulfilment === FULFILMENT_METHOD.STORE_PICKUP && activePickupId
+              ? { pickupLocationId: activePickupId }
+              : {}),
+          },
+          { sessionToken, signal: controller.signal },
+        )
+
+        if (result.nextSessionToken) {
+          try {
+            window.localStorage.setItem(CART_SESSION_STORAGE_KEY, result.nextSessionToken)
+          } catch {
+            // Ignore storage write restriction
+          }
+        }
+
+        setValidation(result.data)
+
+        // Sync local storage ONLY for explicit auto-clamps (<= low_stock_threshold or > MAX_QTY_PER_VARIANT);
+        // never silently change QUANTITY_UNAVAILABLE (> low_stock_threshold) counts.
+        const adjusted = result.data.items.filter(
+          (line) => line.status === 'ADJUSTED_QTY' && line.effectiveQty > 0,
+        )
+        if (adjusted.length > 0) {
+          const adjustById = new Map(adjusted.map((l) => [l.variantId, l.effectiveQty]))
+          let changed = false
+          const nextStored = targetItems.map((entry) => {
+            const clampedQty = adjustById.get(entry.variantId)
+            if (clampedQty !== undefined && clampedQty !== entry.qty) {
+              changed = true
+              return { ...entry, qty: clampedQty }
+            }
+            return entry
+          })
+          if (changed) {
+            persistItems(nextStored)
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return
+        setValidateError(
+          err instanceof Error ? err.message : 'Could not verify live bag totals right now.',
+        )
+      } finally {
+        if (validateControllerRef.current === controller) {
+          validateControllerRef.current = null
+          setIsValidating(false)
+        }
+      }
+    },
+    [
+      couponCode,
+      fulfilmentMethod,
+      items,
+      persistItems,
+      pickupLocationId,
+      pincode,
+      storePickupEnabled,
+    ],
+  )
+
+  // Debounced server validation while drawer is open or items change cleanly
+  useEffect(() => {
+    if (!hydrated || !isOpen) return
+    if (items.length === 0) {
+      setValidation(null)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void runServerValidation()
+    }, VALIDATE_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [
+    couponCode,
+    fulfilmentMethod,
+    hydrated,
+    isOpen,
+    items,
+    pickupLocationId,
+    pincode,
+    runServerValidation,
+  ])
 
   const add = useCallback(
     (variantId: string, qty = 1) => {
@@ -370,6 +544,8 @@ export function CartProvider({
 
   const clear = useCallback(() => {
     persistItems([])
+    setValidation(null)
+    setCouponCode('')
   }, [persistItems])
 
   const getVariantAvailability = useCallback(
@@ -394,42 +570,63 @@ export function CartProvider({
   )
 
   const lines = useMemo<CartLine[]>(() => {
+    const validatedById = new Map((validation?.items ?? []).map((l) => [l.variantId, l]))
     const resolved: CartLine[] = []
     for (const item of items) {
+      const serverLine = validatedById.get(item.variantId)
       const entry = catalogMap[item.variantId]
-      if (!entry) continue
-      const availability = getVariantAvailability(entry.variant)
+      if (!entry && !serverLine) continue
+
+      const unitPricePaise = serverLine
+        ? serverLine.unitPricePaise
+        : (entry?.variant.pricePaise ?? 0)
+      const mrpPaise = serverLine ? serverLine.mrpPaise : (entry?.variant.mrpPaise ?? null)
+      const lineTotalPaise = serverLine ? serverLine.lineSubtotalPaise : unitPricePaise * item.qty
+      const availability: PublicVariantAvailabilityDto = serverLine
+        ? {
+            variantId: serverLine.variantId,
+            inStock: serverLine.inStock,
+            lowStock: serverLine.lowStock,
+            ...(serverLine.availableStock !== undefined
+              ? { availableStock: serverLine.availableStock }
+              : {}),
+          }
+        : getVariantAvailability(entry!.variant)
+
       resolved.push({
         variantId: item.variantId,
         qty: item.qty,
-        productId: entry.productId,
-        productSlug: entry.productSlug,
-        productName: entry.productName,
-        sizeLabel: entry.variant.sizeLabel,
-        sku: entry.variant.sku,
-        unitPricePaise: entry.variant.pricePaise,
-        mrpPaise: entry.variant.mrpPaise,
-        lineTotalPaise: entry.variant.pricePaise * item.qty,
-        imageUrl: entry.imageUrl,
-        imageAlt: entry.imageAlt,
+        productId: serverLine?.productId ?? entry!.productId,
+        productSlug: serverLine?.productSlug ?? entry!.productSlug,
+        productName: serverLine?.productName ?? entry!.productName,
+        sizeLabel: serverLine?.sizeLabel ?? entry!.variant.sizeLabel,
+        sku: serverLine?.sku ?? entry!.variant.sku,
+        unitPricePaise,
+        mrpPaise,
+        lineTotalPaise,
+        imageUrl: serverLine?.imageUrl ?? entry?.imageUrl ?? null,
+        imageAlt: serverLine?.imageAlt ?? entry?.imageAlt ?? 'Cold-pressed oil bottle',
         availability,
       })
     }
     return resolved
-  }, [catalogMap, getVariantAvailability, items])
+  }, [catalogMap, getVariantAvailability, items, validation?.items])
 
   const hasUnresolvedItems = useMemo(
-    () => hydrated && items.some((item) => !catalogMap[item.variantId]),
-    [catalogMap, hydrated, items],
+    () => hydrated && items.some((item) => !catalogMap[item.variantId]) && !validation,
+    [catalogMap, hydrated, items, validation],
   )
 
   const count = useMemo(() => items.reduce((sum, item) => sum + item.qty, 0), [items])
   const subtotalPaise = useMemo(
-    () => lines.reduce((sum, line) => sum + line.lineTotalPaise, 0),
-    [lines],
+    () =>
+      validation?.summary.itemsSubtotalPaise ??
+      lines.reduce((sum, line) => sum + line.lineTotalPaise, 0),
+    [lines, validation?.summary.itemsSubtotalPaise],
   )
 
-  const freeShippingThresholdPaise = initialSettings?.freeShippingThresholdPaise ?? 0
+  const freeShippingEnabled = Boolean(initialSettings?.freeShippingEnabled)
+  const freeShippingThresholdPaise = initialSettings?.freeShippingThresholdPaise ?? null
 
   const value = useMemo<CartContextValue>(
     () => ({
@@ -447,7 +644,22 @@ export function CartProvider({
       getVariantAvailability,
       getVariantQty,
       maxOrderQtyPerVariant,
+      freeShippingEnabled,
       freeShippingThresholdPaise,
+      storePickupEnabled,
+      pickupLocations,
+      fulfilmentMethod: storePickupEnabled ? fulfilmentMethod : FULFILMENT_METHOD.DELIVERY,
+      setFulfilmentMethod,
+      pickupLocationId,
+      setPickupLocationId,
+      pincode,
+      setPincode,
+      couponCode,
+      setCouponCode,
+      validation,
+      isValidating,
+      validateError,
+      revalidateCartNow: runServerValidation,
       hasUnresolvedItems,
       refreshAvailability,
     }),
@@ -455,19 +667,30 @@ export function CartProvider({
       add,
       clear,
       count,
+      couponCode,
+      freeShippingEnabled,
       freeShippingThresholdPaise,
+      fulfilmentMethod,
       getVariantAvailability,
       getVariantQty,
       hasUnresolvedItems,
       isOpen,
+      isValidating,
       items,
       lines,
       maxOrderQtyPerVariant,
+      pickupLocationId,
+      pickupLocations,
+      pincode,
       refreshAvailability,
       registerProducts,
       remove,
+      runServerValidation,
       setQty,
+      storePickupEnabled,
       subtotalPaise,
+      validateError,
+      validation,
     ],
   )
 

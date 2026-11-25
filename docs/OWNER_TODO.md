@@ -33,6 +33,7 @@ _No owner actions required for Phase 0._
 
 ### Legal & compliance
 
+- [ ] **LAUNCH BLOCKER**: Sign off GST rate, product HSN codes (`products.hsn_code`), shipping tax treatment (`gst_config`), and invoice format with an accountant before accepting any live orders.
 - [ ] Confirm FSSAI licence number and registered address.
 - [ ] Supply final Shipping, Refund & Cancellation, Privacy and Terms text (reviewed by a lawyer).
 - [ ] Confirm GST registration details (GSTIN, HSN code for edible oils).
@@ -49,11 +50,12 @@ _No owner actions required for Phase 0._
 - [ ] Set up a transactional email account (e.g. Resend, SendGrid) and verify the sending domain.
 - [ ] Draft SMS and email templates (order confirmation, dispatch, delivery, COD confirm).
 
-### Shipping & serviceable pincodes
+### Shipping, store pickup & serviceable pincodes
 
 - [ ] Supply the initial list of serviceable pincodes, delivery days and COD eligibility.
-- [ ] Confirm the free-shipping threshold amount.
+- [ ] Decide whether and when to turn on promotional free shipping (`free_shipping_enabled`, threshold, optional start/end window) via owner admin setting.
 - [ ] Confirm the flat shipping fee for non-free orders.
+- [ ] **PICKUP BLOCKER**: Supply a real store pickup address, opening hours, and preparation time before enabling `store_pickup_enabled` in production.
 
 ### Store settings
 

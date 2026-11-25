@@ -58,6 +58,7 @@ export default async function ShopPage({
     <CartProvider initialProducts={data.items} initialSettings={settings}>
       <Navbar
         brandName={settings.brandName}
+        freeShippingEnabled={settings.freeShippingEnabled}
         freeShippingThresholdPaise={settings.freeShippingThresholdPaise}
       />
       <main className="bg-ivory text-ink min-h-[100svh] pt-36 pb-24 md:pt-44">

@@ -185,23 +185,23 @@ colours or styles were introduced. If something new was added, explain why.
 
 ## Phases
 
-| #   | Name                            | Done when                                                       |
-| --- | ------------------------------- | --------------------------------------------------------------- |
-| 0   | Audit & monorepo                | Web builds, CI is green, no visual change                       |
-| 1   | Database, seed & shared schemas | `migrate + seed` works from scratch                             |
-| 2   | Public API                      | Endpoints documented (OpenAPI) and tested                       |
-| 3   | Connect storefront to real data | Price change in DB changes site, no code edits                  |
-| 4   | Cart                            | Tampering localStorage prices has no effect                     |
-| 5   | Checkout                        | Test payments pass/fail correctly; stock reserved/released      |
-| 6   | Payment webhook, orders & stock | Replaying webhook twice → no change; concurrency test passes    |
-| 7   | Notifications                   | Every status change sends exactly one notification in test mode |
-| 8   | Track Order & account           | —                                                               |
-| 9   | Admin app                       | All six placeholder products replaceable from admin UI alone    |
-| 10  | Trust features                  | Batch lookup live; reviews from verified buyers only            |
-| 11  | SEO, performance, accessibility | Core Web Vitals green; axe audit clean                          |
-| 12  | Testing                         | All test suites pass; load test, security review done           |
-| 13  | Deployment & operations         | CI/CD, backups, Sentry, uptime monitoring                       |
-| 14  | Launch checklist                | Go/no-go checklist signed off by owner                          |
+| #   | Name                            | Done when                                                                          |
+| --- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| 0   | Audit & monorepo                | Web builds, CI is green, no visual change                                          |
+| 1   | Database, seed & shared schemas | `migrate + seed` works from scratch                                                |
+| 2   | Public API                      | Endpoints documented (OpenAPI) and tested                                          |
+| 3   | Connect storefront to real data | Price change in DB changes site, no code edits                                     |
+| 4   | Cart                            | Tampering localStorage prices has no effect                                        |
+| 5   | Checkout                        | Test payments pass/fail correctly; stock reserved/released                         |
+| 6   | Payment webhook, orders & stock | Replaying webhook twice → no change; concurrency test passes                       |
+| 7   | Notifications                   | Every status change sends exactly one notification in test mode                    |
+| 8   | Track Order & account           | —                                                                                  |
+| 9   | Admin app                       | All six placeholder products replaceable from admin UI alone                       |
+| 10  | Trust features                  | Batch lookup live; reviews from verified buyers only                               |
+| 11  | SEO, performance, accessibility | Core Web Vitals green; axe audit clean                                             |
+| 12  | Testing                         | All test suites pass; load test, security review done                              |
+| 13  | Deployment & operations         | CI/CD, backups, Sentry, uptime monitoring                                          |
+| 14  | Launch checklist                | Go/no-go checklist signed off by owner (incl. accountant GST/HSN/invoice sign-off) |
 
 ---
 

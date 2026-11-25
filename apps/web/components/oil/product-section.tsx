@@ -238,8 +238,8 @@ export function ProductSection({ products }: ProductSectionProps) {
             Why the price?
           </p>
           <p className="text-forest max-w-2xl font-serif text-2xl leading-snug font-medium md:col-span-9 md:text-3xl">
-            More whole seeds, less oil per batch, time to settle and independent testing. Prices
-            shown include applicable taxes.
+            More whole seeds, less oil per batch, time to settle and independent testing. Live batch
+            pricing is verified in your bag.
           </p>
         </div>
       </div>
