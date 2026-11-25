@@ -1,0 +1,37 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@theme inline {
+  /* ── Brand palette (mirror of storefront) ── */
+  --color-forest: #2a2118;
+  --color-gold: #c3a265;
+  --color-bronze: #6f5222;
+  --color-ivory: #fcf9f3;
+  --color-champagne: #f3ebdb;
+  --color-sand: #e9ddc6;
+  --color-ink: #33291f;
+  --color-sage: #6a5e4e;
+
+  --color-background: #fcf9f3;
+  --color-foreground: #33291f;
+
+  /* ── Error / success tokens — harmonised with palette ── */
+  --color-error: #8b2f2f;
+  --color-error-bg: #fdf3f3;
+  --color-success: #2f5c3f;
+  --color-success-bg: #f0f7f2;
+
+  /* ── Typography ── */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-ivory);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}

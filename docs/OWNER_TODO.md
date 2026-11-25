@@ -1,0 +1,89 @@
+# OWNER TODO
+
+> Items marked **TODO(owner)** in code and docs that need real data before launch.
+> Updated at the end of each phase.
+
+---
+
+## Phase 0 — Monorepo setup
+
+_No owner actions required for Phase 0._
+
+---
+
+## Open items (all phases)
+
+### Brand identity
+
+- [ ] Decide and register the final brand name (replaces every `[YOUR BRAND]` placeholder).
+- [ ] Supply a logo file (SVG + PNG at 1×, 2×).
+- [ ] Confirm brand colours match the existing palette, or flag changes early.
+
+### Products & pricing
+
+- [ ] Finalise the six product names, descriptions, "best for" lines and origin regions.
+- [ ] Set real prices and MRP (in rupees) for each of the three sizes per product.
+- [ ] Supply product photography for each product and each size variant.
+- [ ] Confirm Tamil/regional language lines for each product.
+
+### Batches & lab reports
+
+- [ ] Supply first batch numbers, pressing dates and best-before dates.
+- [ ] Upload lab report PDFs for each batch (or confirm placeholder URL structure).
+
+### Legal & compliance
+
+- [ ] Confirm FSSAI licence number and registered address.
+- [ ] Supply final Shipping, Refund & Cancellation, Privacy and Terms text (reviewed by a lawyer).
+- [ ] Confirm GST registration details (GSTIN, HSN code for edible oils).
+- [ ] Confirm whether DPDP Act consent banner is required at launch.
+
+### Payments
+
+- [ ] Create a Razorpay account and supply the live API keys (via environment secrets, never in code).
+- [ ] Do a small-value live test payment and refund before full launch.
+
+### Notifications
+
+- [ ] Set up an SMS provider account (e.g. Twilio, MSG91) and supply credentials.
+- [ ] Set up a transactional email account (e.g. Resend, SendGrid) and verify the sending domain.
+- [ ] Draft SMS and email templates (order confirmation, dispatch, delivery, COD confirm).
+
+### Shipping & serviceable pincodes
+
+- [ ] Supply the initial list of serviceable pincodes, delivery days and COD eligibility.
+- [ ] Confirm the free-shipping threshold amount.
+- [ ] Confirm the flat shipping fee for non-free orders.
+
+### Store settings
+
+- [ ] Supply contact phone number(s) and WhatsApp number.
+- [ ] Supply contact email address.
+- [ ] Supply store address for the footer and invoices.
+
+### Admin access
+
+- [ ] Confirm the owner admin email address(es) for initial account creation.
+- [ ] Set up TOTP 2FA on the admin account before going live.
+
+### Founder story
+
+- [ ] Supply the founder name and the founding anecdote for the story section.
+- [ ] Supply a founder quote (kept honest; no invented statistics).
+
+### FAQ
+
+- [ ] Supply four or more real FAQ questions and answers.
+
+### Kitchen use cases
+
+- [ ] Confirm or update the four kitchen-use cards (tempering, frying, pickles, festival) and their photos.
+
+### Process section
+
+- [ ] Supply or confirm the photo of the wooden press in action (Step 03 placeholder).
+- [ ] Supply or confirm the batch labelling photo (Step 06 placeholder).
+
+---
+
+_This file is updated automatically at the end of each phase. Add items freely._

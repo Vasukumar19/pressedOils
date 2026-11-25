@@ -1,5 +1,20 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
 pmOnFail: ignore
 
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
+
+# Allow native build scripts for these packages (required for SWC and esbuild)
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
+  - sharp
+
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  sharp: true
