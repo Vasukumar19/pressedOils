@@ -51,11 +51,22 @@ _No owner actions required for Phase 0._
 - [ ] Confirm whether to keep Cash on Delivery enabled (`cod_config`), review `cod_fee_paise` (default ₹0) and `cod_max_order_paise` (default ₹5,000), and do NOT enable COD or Pay-at-Store in production until Phase 7 SMS OTP verification is active.
 - [ ] Do a small-value live test payment and refund (verifying both `refund.processed` webhook finality and manual cancel/return-stock behavior) before full launch.
 
-### Notifications
+### Notifications, DLT Compliance & Email Domain Auth (Phase 7 LAUNCH BLOCKERS)
 
-- [ ] Set up an SMS provider account (e.g. Twilio, MSG91) and supply credentials.
-- [ ] Set up a transactional email account (e.g. Resend, SendGrid) and verify the sending domain.
-- [ ] Draft SMS and email templates (order confirmation, dispatch, delivery, COD confirm).
+- [ ] **LAUNCH BLOCKER (TRAI DLT Compliance — Long Lead Time)**: Register your business Entity ID and Header / Sender ID (e.g. `PROILS`), and get all **8 SMS templates** approved on an Indian telecom DLT portal before MSG91 can deliver live SMS:
+  - `MSG91_DLT_TEMPLATE_OTP` (COD checkout verification, order tracking OTP, pickup code reissue)
+  - `MSG91_DLT_TEMPLATE_ORDER_CONFIRMED` (Online & COD confirmation)
+  - `MSG91_DLT_TEMPLATE_ORDER_SHIPPED`
+  - `MSG91_DLT_TEMPLATE_ORDER_DELIVERED`
+  - `MSG91_DLT_TEMPLATE_ORDER_READY_FOR_PICKUP` (includes order no, 6-digit pickup code, store hours, last collection date)
+  - `MSG91_DLT_TEMPLATE_PICKUP_CODE` (reissued pickup code)
+  - `MSG91_DLT_TEMPLATE_OWNER_ALERT` (critical owner ops alerts — zero customer PII)
+  - `MSG91_DLT_TEMPLATE_ORDER_UPDATE` (packed, picked up, cancelled, refund updates)
+- [ ] **LAUNCH BLOCKER (Email Domain Verification)**: Create a Resend account (`RESEND_API_KEY`), verify your sending domain's **SPF, DKIM, and DMARC** DNS records for `EMAIL_FROM`, and configure the Resend webhook (`https://<api-domain>/api/webhooks/resend` + `RESEND_WEBHOOK_SECRET`) for delivery, bounce, and complaint suppression tracking.
+- [ ] Supply `MSG91_AUTH_KEY`, `MSG91_SENDER_ID`, `MSG91_WEBHOOK_SECRET`, `OTP_HMAC_SECRET`, and keep `SMS_PROVIDER=msg91` + `EMAIL_PROVIDER=resend` in production (boot fails unconditionally if mock transports are active or any required credential/DLT template ID is missing). Check latest MSG91/Resend pricing and carrier DLT rules before enabling live traffic.
+- [ ] Configure `OWNER_ALERT_EMAIL` (comma-separated list), `OWNER_ALERT_PHONE` (for critical SMS alerts), `SMS_LOW_BALANCE_THRESHOLD`, and an independent fallback `UPTIME_ALERT_WEBHOOK_URL` so critical outages still alert even if email/SMS providers fail.
+- [ ] Configure Cloudflare Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`) to protect repeated SMS OTP sends against SMS pumping.
+- [ ] Verify COD / Pay-at-Store remain disabled by their flags until live MSG91 + DLT OTP delivery is verified end-to-end in staging.
 
 ### Shipping, store pickup & serviceable pincodes
 

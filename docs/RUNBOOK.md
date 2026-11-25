@@ -1,7 +1,7 @@
 # Operations Runbook — [YOUR BRAND]
 
 > Living operations reference updated as infrastructure is added across phases.
-> Last updated: Phase 6
+> Last updated: Phase 7
 
 ---
 
@@ -42,6 +42,16 @@
   - `sched-reservation-expiry-1m` (`* * * * *`): Releases `PENDING` online reservations past 15m TTL + 2m grace window, ALWAYS querying Razorpay first so captured or `authorized` payments are never released.
   - `sched-reconcile-recent-2m` (`*/2 * * * *`): Reconciles `PENDING_PAYMENT` orders aged `2m–60m` against Razorpay (batches of 50 with rate-limit pauses).
   - `sched-reconcile-aging-30m` (`*/30 * * * *`): Reconciles `PENDING_PAYMENT` orders aged `1h–24h` and expires abandoned uncaptured/unauthorized orders `> 24h`.
+  - `sched-provider-health-30m` (`*/30 * * * *`): Checks Resend API & MSG91 balance (`SMS_LOW_BALANCE_THRESHOLD`) + BullMQ failed job backlog, firing grouped critical alerts cleanly.
+
+## Notifications, OTP & Alert Routing (Phase 7)
+
+- **Boot safety**: `APP_ENV=production` refuses boot unless BOTH MSG91 (`MSG91_AUTH_KEY`, `MSG91_SENDER_ID`, all 8 DLT template IDs) and Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `RESEND_WEBHOOK_SECRET`) plus `OTP_HMAC_SECRET` are configured. Mock transports (`SMS_PROVIDER=mock`, `EMAIL_PROVIDER=mock`) are impossible in production.
+- **At-most-once delivery**: `notifications` enforces unique `(channel, order_id, event)` idempotency keys per channel; retries never duplicate already-sent SMS or emails. Phone numbers and emails are always masked in `notifications` and logs (`+91******3210`, `a***@domain.com`), and plaintext OTP/pickup codes are never logged.
+- **Provider webhooks & suppression**: `POST /api/webhooks/resend` verifies Svix HMAC signatures and adds bounced/complained hashed emails into `email_suppressions`; `POST /api/webhooks/msg91` verifies `X-Msg91-Webhook-Secret` and records delivery outcomes.
+- **COD OTP & anti-SMS pumping**: COD and Pay-at-store orders require a 15-minute, single-use `phoneVerificationToken` bound to exact Indian phone + cart session. OTP challenges are 6 digits HMAC-stored, expire in 5m, cap at 5 attempts, enforce 45s cooldown, cap at `3/phone/hr`, `5/session/hr`, `10/IP/hr`, and trigger Cloudflare Turnstile verification after `>= 2` sends or failed attempts.
+- **Deferred pickup codes**: Store pickup orders never issue pickup codes at checkout; a fresh 6-digit HMAC code + `pickup_last_collection_at` (`holdWindowDays`) is issued when transitioning to `READY_FOR_PICKUP` and can be rotated cleanly via `POST /api/orders/pickup-code/reissue` (or counter `orderNumber + photo ID` fallback).
+- **Owner alert grouping**: Identical alerts group within 15-minute windows (`900s`) carrying repetition counts, route `CRITICAL` to `OWNER_ALERT_EMAIL` (comma-separated) + `OWNER_ALERT_PHONE` + `SENTRY_DSN` + `UPTIME_ALERT_WEBHOOK_URL`, `WARNING` to email + Sentry, and `INFO` to logs only. Staging test endpoint: `POST /api/admin/alerts/test`.
 
 ---
 
