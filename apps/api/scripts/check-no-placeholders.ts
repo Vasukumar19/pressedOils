@@ -1,15 +1,26 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
-import { canActivateProduct, isPlaceholderUrl } from '@pressedoils/shared'
+import { canActivateProduct, isPlaceholderUrl, SETTING_KEYS } from '@pressedoils/shared'
 
 /**
  * CI & pre-launch safety check:
  * Fails if any active product in the database references a /placeholders/ URL
- * or lacks a valid image, price > 0, stock, or active current batch.
+ * or lacks a valid image, price > 0, stock, active current batch, or required lab report.
  */
 async function checkNoPlaceholders() {
   const prisma = new PrismaClient()
   try {
+    const allowedReportDomains = (process.env.CDN_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+
+    const labReportSetting = await prisma.setting.findUnique({
+      where: { key: SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION },
+    })
+    const requireLabReportForActivation =
+      (labReportSetting?.value as { enabled?: boolean } | null)?.enabled ?? true
+
     const activeProducts = await prisma.product.findMany({
       where: { is_active: true },
       include: {
@@ -28,18 +39,25 @@ async function checkNoPlaceholders() {
         }
       }
 
-      const check = canActivateProduct({
-        images: product.images.map((i) => ({ url: i.url })),
-        variants: product.variants.map((v) => ({
-          isActive: v.is_active,
-          pricePaise: v.price_paise,
-          stock: v.stock,
-        })),
-        batches: product.batches.map((b) => ({
-          isActive: b.is_active,
-          isCurrent: b.is_current,
-        })),
-      })
+      const check = canActivateProduct(
+        {
+          images: product.images.map((i) => ({ url: i.url })),
+          variants: product.variants.map((v) => ({
+            isActive: v.is_active,
+            pricePaise: v.price_paise,
+            stock: v.stock,
+          })),
+          batches: product.batches.map((b) => ({
+            isActive: b.is_active,
+            isCurrent: b.is_current,
+            labReportUrl: b.lab_report_url,
+          })),
+        },
+        {
+          requireLabReportForActivation,
+          allowedReportDomains,
+        },
+      )
 
       if (!check.allowed) {
         failures.push(

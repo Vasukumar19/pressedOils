@@ -168,4 +168,55 @@ describe('ProductsService security, field whitelist & Redis fallback', () => {
       env.APP_ENV = prevAppEnv
     }
   })
+
+  it('strips untrusted labReportUrl in production and retains trusted CDN report URLs', async () => {
+    const prisma = {
+      product: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce(createSampleDbProducts('https://cdn.example.com/p/gnd.webp'))
+          .mockResolvedValueOnce([
+            {
+              ...createSampleDbProducts('https://cdn.example.com/p/gnd.webp')[0]!,
+              batches: [
+                {
+                  batch_no: 'GND-2026-01',
+                  pressed_on: new Date('2026-01-15'),
+                  best_before: new Date('2026-10-15'),
+                  lab_report_url: 'https://untrusted.example.org/report.pdf',
+                  lab_tested_on: new Date('2026-01-18'),
+                },
+              ],
+            },
+          ]),
+      },
+      variant: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService
+
+    const redis = {
+      getString: vi.fn().mockResolvedValue('1'),
+      setString: vi.fn(),
+      getJson: vi.fn().mockResolvedValue(null),
+      setJson: vi.fn(),
+    } as unknown as RedisService
+
+    const service = new ProductsService(prisma, new ProductCacheService(redis))
+    const prevAppEnv = env.APP_ENV
+    const prevAllowed = env.CDN_ALLOWED_HOSTS
+    env.APP_ENV = 'production'
+    env.CDN_ALLOWED_HOSTS = ['cdn.example.com']
+
+    try {
+      const trusted = await service.getBySlug('groundnut-oil')
+      expect(trusted.currentBatch?.labReportUrl).toBe('https://cdn.example.com/reports/gnd-01.pdf')
+
+      const untrusted = await service.getBySlug('groundnut-oil')
+      expect(untrusted.currentBatch?.labReportUrl).toBeNull()
+      expect(untrusted.currentBatch?.labTestedOn).toBeNull()
+      expect(untrusted.currentBatch?.labTestedOnDisplay).toBeNull()
+    } finally {
+      env.APP_ENV = prevAppEnv
+      env.CDN_ALLOWED_HOSTS = prevAllowed
+    }
+  })
 })

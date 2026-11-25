@@ -32,41 +32,29 @@ const PLACEHOLDER_PRODUCTS: PlaceholderProductSeed[] = [
     sortOrder: 1,
   },
   {
-    slug: 'sesame-gingelly-oil',
-    skuPrefix: 'SES',
-    name: 'Sesame (Gingelly) Oil [PLACEHOLDER]',
+    slug: 'white-sesame-oil',
+    skuPrefix: 'WSES',
+    name: 'White Sesame Oil [PLACEHOLDER]',
     description:
-      'PLACEHOLDER: Slow-pressed sesame oil with natural nutty aroma, never bleached or deodorised.',
-    bestFor: 'PLACEHOLDER: Tempering, pickles & finishing',
+      'PLACEHOLDER: Slow-pressed white sesame oil with delicate nutty aroma, never bleached or deodorised.',
+    bestFor: 'PLACEHOLDER: Everyday tempering, chutneys & finishing',
     originRegion: 'PLACEHOLDER REGION (e.g. Erode)',
-    imageUrl: '/placeholders/sesame.svg',
-    imageAlt: 'Placeholder bottle illustration for Sesame (Gingelly) Oil',
-    batchNo: 'PH-SES-001',
+    imageUrl: '/placeholders/white-sesame.svg',
+    imageAlt: 'Placeholder bottle illustration for White Sesame Oil',
+    batchNo: 'PH-WSES-001',
     sortOrder: 2,
   },
   {
-    slug: 'coconut-oil',
-    skuPrefix: 'COC',
-    name: 'Coconut Oil [PLACEHOLDER]',
-    description: 'PLACEHOLDER: Cold-pressed mature coconut kernel oil filtered once.',
-    bestFor: 'PLACEHOLDER: Fragrant curries & festival cooking',
-    originRegion: 'PLACEHOLDER REGION (e.g. Kangeyam)',
-    imageUrl: '/placeholders/coconut.svg',
-    imageAlt: 'Placeholder bottle illustration for Coconut Oil',
-    batchNo: 'PH-COC-001',
+    slug: 'black-sesame-oil',
+    skuPrefix: 'BSES',
+    name: 'Black Sesame Oil [PLACEHOLDER]',
+    description: 'PLACEHOLDER: Rich cold-pressed black sesame oil pressed slowly in small batches.',
+    bestFor: 'PLACEHOLDER: Pickles, traditional tempering & bold dishes',
+    originRegion: 'PLACEHOLDER REGION (e.g. Karur)',
+    imageUrl: '/placeholders/black-sesame.svg',
+    imageAlt: 'Placeholder bottle illustration for Black Sesame Oil',
+    batchNo: 'PH-BSES-001',
     sortOrder: 3,
-  },
-  {
-    slug: 'mustard-oil',
-    skuPrefix: 'MUS',
-    name: 'Mustard Oil [PLACEHOLDER]',
-    description: 'PLACEHOLDER: Single-press mustard seed oil with robust pungency.',
-    bestFor: 'PLACEHOLDER: Tadka, marinades & traditional pickles',
-    originRegion: 'PLACEHOLDER REGION (e.g. Bharatpur)',
-    imageUrl: '/placeholders/mustard.svg',
-    imageAlt: 'Placeholder bottle illustration for Mustard Oil',
-    batchNo: 'PH-MUS-001',
-    sortOrder: 4,
   },
   {
     slug: 'sunflower-oil',
@@ -78,7 +66,7 @@ const PLACEHOLDER_PRODUCTS: PlaceholderProductSeed[] = [
     imageUrl: '/placeholders/sunflower.svg',
     imageAlt: 'Placeholder bottle illustration for Sunflower Oil',
     batchNo: 'PH-SUN-001',
-    sortOrder: 5,
+    sortOrder: 4,
   },
   {
     slug: 'safflower-oil',
@@ -90,6 +78,18 @@ const PLACEHOLDER_PRODUCTS: PlaceholderProductSeed[] = [
     imageUrl: '/placeholders/safflower.svg',
     imageAlt: 'Placeholder bottle illustration for Safflower Oil',
     batchNo: 'PH-SAF-001',
+    sortOrder: 5,
+  },
+  {
+    slug: 'coconut-oil',
+    skuPrefix: 'COC',
+    name: 'Coconut Oil [PLACEHOLDER]',
+    description: 'PLACEHOLDER: Cold-pressed mature coconut kernel oil filtered once.',
+    bestFor: 'PLACEHOLDER: Fragrant curries & festival cooking',
+    originRegion: 'PLACEHOLDER REGION (e.g. Kangeyam)',
+    imageUrl: '/placeholders/coconut.svg',
+    imageAlt: 'Placeholder bottle illustration for Coconut Oil',
+    batchNo: 'PH-COC-001',
     sortOrder: 6,
   },
 ]
@@ -100,11 +100,30 @@ const PLACEHOLDER_VARIANTS = [
   { code: '5L', sizeLabel: '5 L', pricePaise: 90000, mrpPaise: 105000, stock: 50 },
 ] as const
 
+const DEPRECATED_SAMPLE_SLUGS = ['mustard-oil', 'sesame-gingelly-oil']
+
 async function seedDev() {
   assertDevSeedAllowed(process.env)
 
   const prisma = new PrismaClient()
   try {
+    // Clean up removed legacy sample slugs if not referenced by orders
+    for (const oldSlug of DEPRECATED_SAMPLE_SLUGS) {
+      const existingOld = await prisma.product.findUnique({ where: { slug: oldSlug } })
+      if (existingOld) {
+        const orderRefs = await prisma.orderItem.count({
+          where: { variant: { product_id: existingOld.id } },
+        })
+        if (orderRefs === 0) {
+          await prisma.stockMovement.deleteMany({
+            where: { variant: { product_id: existingOld.id } },
+          })
+          await prisma.batch.deleteMany({ where: { product_id: existingOld.id } })
+          await prisma.product.delete({ where: { id: existingOld.id } })
+        }
+      }
+    }
+
     const pressedOn = new Date('2026-01-15T00:00:00.000Z')
     const bestBefore = new Date('2026-10-15T00:00:00.000Z')
     const labTestedOn = new Date('2026-01-18T00:00:00.000Z')
@@ -133,7 +152,6 @@ async function seedDev() {
         },
       })
 
-      // Idempotent primary image (delete & re-create only if URL changed or missing)
       const existingImages = await prisma.productImage.findMany({
         where: { product_id: product.id },
         orderBy: { sort_order: 'asc' },
@@ -186,7 +204,6 @@ async function seedDev() {
         }
       }
 
-      // Enforce one current batch per product: clear any other current batch first if needed
       await prisma.batch.updateMany({
         where: { product_id: product.id, batch_no: { not: item.batchNo }, is_current: true },
         data: { is_current: false },
@@ -220,7 +237,6 @@ async function seedDev() {
       })
     }
 
-    // Default placeholder settings
     const defaultSettings: Array<{ key: string; value: object }> = [
       { key: SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE, value: { amountPaise: 99900 } },
       { key: SETTING_KEYS.DEFAULT_SHIPPING_PAISE, value: { amountPaise: 7000 } },
@@ -238,6 +254,7 @@ async function seedDev() {
           registeredAddress: '[REGISTERED ADDRESS PLACEHOLDER]',
         },
       },
+      { key: SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION, value: { enabled: true } },
     ]
 
     for (const s of defaultSettings) {
@@ -248,7 +265,6 @@ async function seedDev() {
       })
     }
 
-    // Sample serviceable pincodes (placeholder)
     const samplePincodes = [
       {
         pincode: '600001',
@@ -291,7 +307,6 @@ async function seedDev() {
       })
     }
 
-    // Sample placeholder coupon
     await prisma.coupon.upsert({
       where: { code: 'SAMPLE10' },
       update: {
@@ -310,7 +325,6 @@ async function seedDev() {
       },
     })
 
-    // Dev placeholder admin (password set on first login in Phase 9)
     await prisma.admin.upsert({
       where: { email: 'owner-dev@example.invalid' },
       update: { role: AdminRole.OWNER, is_active: true },

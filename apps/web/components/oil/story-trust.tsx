@@ -10,7 +10,7 @@ export function FounderStory() {
         <div className="lg:col-span-6">
           <MediaFrame
             src="/images/tempering.png"
-            alt="Hands holding a tempering pan with mustard seeds and curry leaves"
+            alt="Hands holding a tempering pan with spices and curry leaves"
             caption="[PHOTO / HANDS, TEMPERING PAN & CURRY LEAVES]"
             clip
             parallax={7}

@@ -14,6 +14,7 @@ export const SETTING_KEYS = {
   DEFAULT_SHIPPING_PAISE: 'default_shipping_paise',
   GST_CONFIG: 'gst_config',
   STORE_INFO: 'store_info',
+  REQUIRE_LAB_REPORT_FOR_ACTIVATION: 'require_lab_report_for_activation',
 } as const
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS]
@@ -30,6 +31,35 @@ export function isPlaceholderUrl(url: string): boolean {
   } catch {
     return normalized.includes(PLACEHOLDER_PATH_PREFIX)
   }
+}
+
+/**
+ * Validates that a lab report URL is HTTPS, not a placeholder, and hosted on an
+ * explicitly allowlisted storage/CDN domain.
+ */
+export function isTrustedLabReportUrl(
+  url: string | null | undefined,
+  allowedDomains: readonly string[],
+): url is string {
+  if (!url) return false
+  const trimmed = url.trim()
+  if (!trimmed || isPlaceholderUrl(trimmed)) return false
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return false
+  }
+
+  if (parsed.protocol !== 'https:') return false
+  if (allowedDomains.length === 0) return false
+
+  const hostname = parsed.hostname.toLowerCase()
+  return allowedDomains.some((domain) => {
+    const clean = domain.trim().toLowerCase()
+    return clean.length > 0 && (hostname === clean || hostname.endsWith(`.${clean}`))
+  })
 }
 
 export interface RuntimeEnvFlags {

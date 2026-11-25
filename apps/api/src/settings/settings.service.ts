@@ -18,6 +18,7 @@ const PUBLIC_SETTING_KEY_LIST = [
   SETTING_KEYS.DEFAULT_SHIPPING_PAISE,
   SETTING_KEYS.GST_CONFIG,
   SETTING_KEYS.STORE_INFO,
+  SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION,
 ]
 
 @Injectable()
@@ -48,6 +49,7 @@ export class SettingsService {
         const shipping = byKey.get(SETTING_KEYS.DEFAULT_SHIPPING_PAISE)
         const gst = byKey.get(SETTING_KEYS.GST_CONFIG)
         const store = byKey.get(SETTING_KEYS.STORE_INFO)
+        const labReq = byKey.get(SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION)
 
         const mapped = {
           brandName: typeof store?.brandName === 'string' ? store.brandName : '[YOUR BRAND]',
@@ -67,6 +69,8 @@ export class SettingsService {
           registeredAddress:
             typeof store?.registeredAddress === 'string' ? store.registeredAddress : 'TODO(owner)',
           maxQtyPerVariant: env.MAX_QTY_PER_VARIANT,
+          requireLabReportForActivation:
+            typeof labReq?.enabled === 'boolean' ? labReq.enabled : true,
         }
 
         await this.redis.setJson(

@@ -1,5 +1,11 @@
 import { z } from 'zod'
-import { DEFAULT_PAGE_SIZE, isPlaceholderUrl, MAX_PAGE_SIZE, SIZE_LABELS } from '../constants'
+import {
+  DEFAULT_PAGE_SIZE,
+  isPlaceholderUrl,
+  isTrustedLabReportUrl,
+  MAX_PAGE_SIZE,
+  SIZE_LABELS,
+} from '../constants'
 import {
   booleanQueryParamSchema,
   dateOnlySchema,
@@ -216,7 +222,7 @@ export type ProductAvailabilityQuery = z.infer<typeof productAvailabilityQuerySc
 export interface ProductActivationInput {
   images: Array<{ url: string }>
   variants: Array<{ isActive: boolean; pricePaise: number; stock: number }>
-  batches: Array<{ isActive: boolean; isCurrent: boolean }>
+  batches: Array<{ isActive: boolean; isCurrent: boolean; labReportUrl?: string | null }>
 }
 
 export interface ProductActivationResult {
@@ -227,11 +233,16 @@ export interface ProductActivationResult {
 /**
  * Enforces the production activation rule:
  * A product cannot have is_active = true unless it has at least one non-placeholder image,
- * at least one active variant with price > 0 and stock > 0, and an active current batch.
+ * at least one active variant with price > 0 and stock > 0, an active current batch,
+ * and (when requireLabReportForActivation is enabled) a trusted HTTPS lab report URL.
  */
 export function canActivateProduct(
   product: ProductActivationInput,
-  options: { allowPlaceholders?: boolean } = {},
+  options: {
+    allowPlaceholders?: boolean
+    requireLabReportForActivation?: boolean
+    allowedReportDomains?: readonly string[]
+  } = {},
 ): ProductActivationResult {
   const reasons: string[] = []
   const allowPlaceholders = options.allowPlaceholders ?? false
@@ -252,9 +263,15 @@ export function canActivateProduct(
     }
   }
 
-  const hasCurrentActiveBatch = product.batches.some((b) => b.isActive && b.isCurrent)
-  if (!hasCurrentActiveBatch) {
+  const currentBatch = product.batches.find((b) => b.isActive && b.isCurrent)
+  if (!currentBatch) {
     reasons.push('Product must have an active current batch assigned')
+  } else if (!allowPlaceholders && options.requireLabReportForActivation) {
+    if (!isTrustedLabReportUrl(currentBatch.labReportUrl, options.allowedReportDomains ?? [])) {
+      reasons.push(
+        'Current batch must have a valid HTTPS lab report URL on an allowed CDN/storage domain',
+      )
+    }
   }
 
   return {

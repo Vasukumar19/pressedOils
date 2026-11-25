@@ -9,6 +9,7 @@ import {
   indianPhoneSchema,
   indianPincodeSchema,
   isPlaceholderUrl,
+  isTrustedLabReportUrl,
   ORDER_STATUS,
   paiseSchema,
   pincodeLookupResponseSchema,
@@ -193,6 +194,55 @@ describe('product activation guard', () => {
     })
     expect(result.allowed).toBe(false)
     expect(result.reasons).toHaveLength(3)
+  })
+
+  it('requires a trusted HTTPS CDN lab report URL when requireLabReportForActivation is enabled', () => {
+    const missingReport = canActivateProduct(validProd, {
+      requireLabReportForActivation: true,
+      allowedReportDomains: ['cdn.example.com'],
+    })
+    expect(missingReport.allowed).toBe(false)
+    expect(missingReport.reasons[0]).toContain('lab report')
+
+    const untrustedDomain = canActivateProduct(
+      {
+        ...validProd,
+        batches: [
+          {
+            isActive: true,
+            isCurrent: true,
+            labReportUrl: 'https://evil.example.org/report.pdf',
+          },
+        ],
+      },
+      {
+        requireLabReportForActivation: true,
+        allowedReportDomains: ['cdn.example.com'],
+      },
+    )
+    expect(untrustedDomain.allowed).toBe(false)
+
+    const validReport = canActivateProduct(
+      {
+        ...validProd,
+        batches: [
+          {
+            isActive: true,
+            isCurrent: true,
+            labReportUrl: 'https://cdn.example.com/reports/batch-01.pdf',
+          },
+        ],
+      },
+      {
+        requireLabReportForActivation: true,
+        allowedReportDomains: ['cdn.example.com'],
+      },
+    )
+    expect(validReport.allowed).toBe(true)
+
+    expect(isTrustedLabReportUrl('http://cdn.example.com/a.pdf', ['cdn.example.com'])).toBe(false)
+    expect(isTrustedLabReportUrl('/placeholders/a.pdf', ['cdn.example.com'])).toBe(false)
+    expect(isTrustedLabReportUrl('https://cdn.example.com/a.pdf', ['cdn.example.com'])).toBe(true)
   })
 })
 

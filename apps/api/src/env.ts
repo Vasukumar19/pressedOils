@@ -55,6 +55,15 @@ const envSchema = z
           .map((s) => s.trim())
           .filter(Boolean),
       ),
+    CDN_ALLOWED_HOSTS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
+      ),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'test') {

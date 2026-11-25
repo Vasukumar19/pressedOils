@@ -50,11 +50,11 @@ repo root (pnpm + Turborepo monorepo)
 > - Production activation rule: API refuses `is_active = true` unless the product has a real non-`/placeholders/` image, price > 0, stock set, and an assigned active batch.
 
 1. Groundnut Oil
-2. Sesame (Gingelly) Oil
-3. Coconut Oil
-4. Mustard Oil
-5. Sunflower Oil
-6. Safflower Oil
+2. White Sesame Oil
+3. Black Sesame Oil
+4. Sunflower Oil
+5. Safflower Oil
+6. Coconut Oil
 
 Each has 3 variants: 500 ml, 1 L, 5 L — with clearly fake placeholder prices (₹100 / ₹200 / ₹900)
 and placeholder stock (50 units).

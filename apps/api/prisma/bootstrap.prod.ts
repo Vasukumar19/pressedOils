@@ -45,6 +45,7 @@ async function bootstrapProd() {
           registeredAddress: 'TODO(owner)',
         },
       },
+      { key: SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION, value: { enabled: true } },
     ]
 
     for (const s of defaultSettings) {

@@ -123,6 +123,7 @@ export const publicSettingsResponseSchema = z
     supportPhone: z.string().min(1),
     registeredAddress: z.string().min(1),
     maxQtyPerVariant: z.number().int().positive(),
+    requireLabReportForActivation: z.boolean(),
     showSampleDataBanner: z.boolean(),
   })
   .strict()

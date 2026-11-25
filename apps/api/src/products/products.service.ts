@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common'
 import {
   isPlaceholderUrl,
   isProductionRuntime,
+  isTrustedLabReportUrl,
   type ProductListQuery,
   type PublicAvailabilityResponseDto,
   type PublicProductDto,
@@ -37,19 +38,37 @@ export class ProductsService {
   private filterPlaceholderProducts(products: CachedCatalogProduct[]): CachedCatalogProduct[] {
     if (!this.isProdRuntime()) return products
 
-    return products.filter((product) => {
-      const hasPlaceholder = product.images.some((img) => isPlaceholderUrl(img.url))
-      if (hasPlaceholder) {
-        this.logger.error({
-          alert: 'PLACEHOLDER_PRODUCT_IN_PROD',
-          slug: product.slug,
-          productId: product.id,
-          message: 'Excluded active product referencing /placeholders/ in production',
-        })
-        return false
-      }
-      return true
-    })
+    return products
+      .filter((product) => {
+        const hasPlaceholder = product.images.some((img) => isPlaceholderUrl(img.url))
+        if (hasPlaceholder) {
+          this.logger.error({
+            alert: 'PLACEHOLDER_PRODUCT_IN_PROD',
+            slug: product.slug,
+            productId: product.id,
+            message: 'Excluded active product referencing /placeholders/ in production',
+          })
+          return false
+        }
+        return true
+      })
+      .map((product) => {
+        if (!product.currentBatch) return product
+        const validReport = isTrustedLabReportUrl(
+          product.currentBatch.labReportUrl,
+          env.CDN_ALLOWED_HOSTS,
+        )
+        if (validReport) return product
+        return {
+          ...product,
+          currentBatch: {
+            ...product.currentBatch,
+            labReportUrl: null,
+            labTestedOn: null,
+            labTestedOnDisplay: null,
+          },
+        }
+      })
   }
 
   private async loadAllActiveCatalog(): Promise<CachedCatalogProduct[]> {

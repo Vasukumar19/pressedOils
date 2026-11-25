@@ -137,7 +137,7 @@ export const KITCHEN_CARDS = [
     title: 'Tempering',
     body: 'Sesame for a warm, distinctive finish.',
     image: '/images/tempering.png',
-    alt: 'Mustard seeds and curry leaves sizzling in a tempering pan',
+    alt: 'Spices and curry leaves sizzling in a tempering pan',
   },
   {
     n: '02',
