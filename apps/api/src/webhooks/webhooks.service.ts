@@ -7,6 +7,7 @@ import {
   ReservationStatus as PrismaReservationStatus,
 } from '@prisma/client'
 import {
+  ALERT_SEVERITY,
   MAX_ONLINE_PAYMENT_FAILED_ATTEMPTS,
   type WebhookAckResponseDto,
   webhookAckResponseSchema,
@@ -99,6 +100,7 @@ export class WebhooksService {
         event: 'RAZORPAY_WEBHOOK_INVALID_SIGNATURE',
         hasSignature: Boolean(input.signature),
       })
+      void this.opsAlertService.recordInvalidWebhookSignature()
       throw new UnauthorizedException('Invalid Razorpay webhook signature')
     }
 
@@ -470,6 +472,8 @@ export class WebhooksService {
       },
     })
 
+    void this.opsAlertService.recordPaymentFailedWebhook()
+
     return webhookAckResponseSchema.parse({
       received: true,
       duplicate: false,
@@ -645,11 +649,11 @@ export class WebhooksService {
 
     if (txOutcome.kind === 'UPDATED') {
       void this.queueService.enqueueCustomerNotification({
-        event: txOutcome.isFullRefund
-          ? 'ORDER_REFUNDED'
-          : `ORDER_PARTIALLY_REFUNDED_${txOutcome.nextRefundedPaise}`,
+        event: txOutcome.isFullRefund ? 'ORDER_REFUNDED' : 'ORDER_PARTIALLY_REFUNDED',
         orderId: txOutcome.orderId,
         orderNumber: txOutcome.orderNumber,
+        amountPaise,
+        cumulativeRefundedPaise: txOutcome.nextRefundedPaise,
         message: txOutcome.isFullRefund
           ? `Full refund processed for order ${txOutcome.orderNumber}`
           : `Partial refund (${amountPaise} paise) processed for order ${txOutcome.orderNumber}`,
@@ -658,8 +662,9 @@ export class WebhooksService {
       if (txOutcome.isUnexpectedUnshippedDashboardRefund) {
         await this.opsAlertService.alertCritical({
           alertKey: 'unexpected-dashboard-refund',
-          severity: 'CRITICAL',
+          severity: ALERT_SEVERITY.CRITICAL,
           orderId: txOutcome.orderId,
+          orderNumber: txOutcome.orderNumber,
           message: `Unexpected dashboard refund (${gatewayRefundId}, ${amountPaise} paise) on unshipped order ${txOutcome.orderNumber} (was ${txOutcome.previousOrderStatus}). Verify parcel wasn't dispatched! Stock was NOT restored automatically.`,
           details: {
             gatewayRefundId,
@@ -775,8 +780,9 @@ export class WebhooksService {
     if (orderSummary) {
       await this.opsAlertService.alertCritical({
         alertKey: 'gateway-refund-failed',
-        severity: 'CRITICAL',
+        severity: ALERT_SEVERITY.CRITICAL,
         orderId: orderSummary.id,
+        orderNumber: orderSummary.order_number,
         message: `Gateway refund FAILED (${gatewayRefundId}) on order ${orderSummary.order_number}. Manual refund retry needed.`,
         details: { gatewayRefundId, gatewayPaymentId, amountPaise },
       })

@@ -1,6 +1,118 @@
 {
   "openapi": "3.0.0",
   "paths": {
+    "/api/webhooks/resend": {
+      "post": {
+        "operationId": "NotificationsController_handleResendWebhook",
+        "parameters": [
+          {
+            "name": "svix-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "svix-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "svix-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resend webhook acknowledged"
+          },
+          "401": {
+            "description": "Invalid Resend webhook signature"
+          }
+        },
+        "summary": "Receive Resend delivery, bounce, and complaint webhooks (verifies Svix HMAC signature and updates email suppression list)",
+        "tags": ["webhooks"]
+      }
+    },
+    "/api/webhooks/msg91": {
+      "post": {
+        "operationId": "NotificationsController_handleMsg91Webhook",
+        "parameters": [
+          {
+            "name": "x-msg91-webhook-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MSG91 delivery report acknowledged"
+          },
+          "401": {
+            "description": "Invalid MSG91 webhook secret"
+          }
+        },
+        "summary": "Receive MSG91 SMS delivery report callbacks with constant-time shared secret verification",
+        "tags": ["webhooks"]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "operationId": "SettingsController_getPublicSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public store settings"
+          }
+        },
+        "summary": "Get public store info, thresholds, and GST configuration",
+        "tags": ["settings"]
+      }
+    },
+    "/api/admin/settings": {
+      "patch": {
+        "operationId": "AdminSettingsController_updateSettings",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated public settings snapshot (audit logged)"
+          },
+          "403": {
+            "description": "Forbidden: disabled in production, invalid secret, or non-OWNER admin"
+          }
+        },
+        "summary": "Owner-only dev/staging settings switch (disabled in production until Phase 9 Admin 2FA)",
+        "tags": ["admin-settings"]
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "HealthController_checkLiveness",
@@ -182,52 +294,6 @@
         "tags": ["pincode"]
       }
     },
-    "/api/settings": {
-      "get": {
-        "operationId": "SettingsController_getPublicSettings",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Public store settings"
-          }
-        },
-        "summary": "Get public store info, thresholds, and GST configuration",
-        "tags": ["settings"]
-      }
-    },
-    "/api/admin/settings": {
-      "patch": {
-        "operationId": "AdminSettingsController_updateSettings",
-        "parameters": [
-          {
-            "name": "x-admin-email",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "x-admin-secret",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Updated public settings snapshot (audit logged)"
-          },
-          "403": {
-            "description": "Forbidden: disabled in production, invalid secret, or non-OWNER admin"
-          }
-        },
-        "summary": "Owner-only dev/staging settings switch (disabled in production until Phase 9 Admin 2FA)",
-        "tags": ["admin-settings"]
-      }
-    },
     "/api/cart/validate": {
       "post": {
         "operationId": "CartController_validate",
@@ -255,6 +321,61 @@
         },
         "summary": "Validate cart items, quantities, live PostgreSQL prices/stock, coupons, pincode shipping, and store pickup",
         "tags": ["cart"]
+      }
+    },
+    "/api/otp/send": {
+      "post": {
+        "operationId": "OtpController_sendOtp",
+        "parameters": [
+          {
+            "name": "x-cart-session",
+            "in": "header",
+            "description": "Signed anonymous cart session token binding OTP tokens to browser session",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OTP issued and dispatched cleanly via SMS"
+          },
+          "400": {
+            "description": "Invalid Indian mobile or CAPTCHA required"
+          },
+          "429": {
+            "description": "Cooldown or hourly OTP limit exceeded"
+          }
+        },
+        "summary": "Send a 6-digit Indian mobile OTP (COD verification, order tracking, or pickup code reissue) with SMS pumping protection",
+        "tags": ["otp"]
+      }
+    },
+    "/api/otp/verify": {
+      "post": {
+        "operationId": "OtpController_verifyOtp",
+        "parameters": [
+          {
+            "name": "x-cart-session",
+            "in": "header",
+            "description": "Signed anonymous cart session token matching OTP issuance session",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OTP verified; short-lived verification token returned"
+          },
+          "400": {
+            "description": "Wrong code, expired OTP, or max attempts reached"
+          }
+        },
+        "summary": "Verify a 6-digit OTP and issue a single-use, 15-minute phone verification token bound to phone and session",
+        "tags": ["otp"]
       }
     },
     "/api/checkout": {
@@ -378,10 +499,47 @@
         "tags": ["webhooks"]
       }
     },
+    "/api/orders/pickup-code/reissue": {
+      "post": {
+        "operationId": "OrdersController_reissuePickupCode",
+        "parameters": [
+          {
+            "name": "x-cart-session",
+            "in": "header",
+            "description": "Signed session token matching the OTP verification session",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New pickup code generated and sent via SMS & email"
+          },
+          "403": {
+            "description": "Invalid/expired OTP phone verification token"
+          },
+          "429": {
+            "description": "Pickup code reissue rate/cooldown limit reached"
+          }
+        },
+        "summary": "OTP-protected customer request to rotate & resend a fresh 6-digit store pickup code (invalidates previous codes)",
+        "tags": ["orders"]
+      }
+    },
     "/api/admin/orders/{id}/confirm": {
       "post": {
         "operationId": "AdminOrdersController_confirmOrder",
         "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "x-admin-email",
             "in": "header",
@@ -416,6 +574,14 @@
         "operationId": "AdminOrdersController_cancelOrder",
         "parameters": [
           {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "x-admin-email",
             "in": "header",
             "required": true,
@@ -448,6 +614,14 @@
       "post": {
         "operationId": "AdminOrdersController_refundOrder",
         "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "idempotency-key",
             "in": "header",
@@ -487,6 +661,14 @@
         "operationId": "AdminOrdersController_returnOrderStock",
         "parameters": [
           {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "x-admin-email",
             "in": "header",
             "required": true,
@@ -509,6 +691,229 @@
           }
         },
         "summary": "Record inspected physical return stock (sealed restock vs damaged write-off) on post-shipment orders (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/pack": {
+      "post": {
+        "operationId": "AdminOrdersController_packOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transition CONFIRMED order to PACKED and notify customer (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/ship": {
+      "post": {
+        "operationId": "AdminOrdersController_shipOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transition PACKED delivery order to SHIPPED with tracking URL (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/ready-for-pickup": {
+      "post": {
+        "operationId": "AdminOrdersController_readyForPickup",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transition PACKED pickup order to READY_FOR_PICKUP, generate fresh 6-digit pickup code, and send SMS/email (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/deliver": {
+      "post": {
+        "operationId": "AdminOrdersController_deliverOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transition SHIPPED order to DELIVERED and notify customer (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/pickup-complete": {
+      "post": {
+        "operationId": "AdminOrdersController_pickupComplete",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Complete store pickup (verifies 6-digit code or order number + photo ID fallback) and notify customer (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/alerts/test": {
+      "post": {
+        "operationId": "AdminAlertsController_sendTestAlert",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Test alert dispatched across configured channels"
+          },
+          "403": {
+            "description": "Disabled in production or invalid admin credentials"
+          }
+        },
+        "summary": "Send a staging test alert across logs, Sentry, external uptime webhook, owner email, and SMS (disabled in prod)",
         "tags": ["admin-orders"]
       }
     }
@@ -537,8 +942,16 @@
       "description": "Checkout, inventory reservations, COD, and Razorpay verification"
     },
     {
+      "name": "otp",
+      "description": "Rate-limited Indian mobile OTP verification and Turnstile protection"
+    },
+    {
+      "name": "orders",
+      "description": "Customer order pickup code reissue"
+    },
+    {
       "name": "webhooks",
-      "description": "Verified payment gateway webhooks (raw-body HMAC + replay idempotency)"
+      "description": "Verified payment and notification provider webhooks"
     },
     {
       "name": "pincode",
@@ -554,7 +967,7 @@
     },
     {
       "name": "admin-orders",
-      "description": "Protected dev/staging order cancel, refund & return actions (pre-Phase 9)"
+      "description": "Protected dev/staging order transitions, cancel, refund & alerts (pre-Phase 9)"
     }
   ],
   "servers": [],

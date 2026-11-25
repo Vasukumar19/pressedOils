@@ -16,13 +16,15 @@ export function buildOpenApiConfig() {
     .addTag('products', 'Catalog, product detail, and live availability')
     .addTag('cart', 'Server cart validation, pricing, coupons, and fulfilment checks')
     .addTag('checkout', 'Checkout, inventory reservations, COD, and Razorpay verification')
-    .addTag('webhooks', 'Verified payment gateway webhooks (raw-body HMAC + replay idempotency)')
+    .addTag('otp', 'Rate-limited Indian mobile OTP verification and Turnstile protection')
+    .addTag('orders', 'Customer order pickup code reissue')
+    .addTag('webhooks', 'Verified payment and notification provider webhooks')
     .addTag('pincode', 'Delivery serviceability, TAT, COD, and shipping fees')
     .addTag('settings', 'Public store configuration and thresholds')
     .addTag('admin-settings', 'Protected owner settings controls (pre-Phase 9)')
     .addTag(
       'admin-orders',
-      'Protected dev/staging order cancel, refund & return actions (pre-Phase 9)',
+      'Protected dev/staging order transitions, cancel, refund & alerts (pre-Phase 9)',
     )
     .build()
 }

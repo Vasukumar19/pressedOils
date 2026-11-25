@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common'
 import { isProductionRuntime } from '@pressedoils/shared'
 import { env } from '../env'
@@ -395,7 +395,7 @@ export class PaymentGatewayService {
       }
       return {
         refunded: true,
-        refundId: `rfnd_mock_${input.gatewayPaymentId.slice(-10)}`,
+        refundId: `rfnd_mock_${input.gatewayPaymentId.slice(-8)}_${randomUUID().slice(0, 8)}`,
       }
     }
 

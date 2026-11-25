@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { CartModule } from '../cart/cart.module'
+import { OtpModule } from '../otp/otp.module'
 import { PincodeModule } from '../pincode/pincode.module'
 import { ProductsModule } from '../products/products.module'
 import { SettingsModule } from '../settings/settings.module'
@@ -10,7 +11,7 @@ import { CheckoutService } from './checkout.service'
 import { PaymentGatewayService } from './payment-gateway.service'
 
 @Module({
-  imports: [PincodeModule, SettingsModule, ProductsModule, CartModule],
+  imports: [PincodeModule, SettingsModule, ProductsModule, CartModule, OtpModule],
   controllers: [CheckoutController],
   providers: [
     PaymentGatewayService,
@@ -18,6 +19,6 @@ import { PaymentGatewayService } from './payment-gateway.service'
     CheckoutRateLimitService,
     CheckoutService,
   ],
-  exports: [CheckoutService, PaymentGatewayService],
+  exports: [CheckoutService, CheckoutSecurityService, PaymentGatewayService],
 })
 export class CheckoutModule {}

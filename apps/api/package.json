@@ -22,7 +22,7 @@
     "bootstrap:prod": "tsx prisma/bootstrap.prod.ts",
     "db:setup": "prisma migrate deploy && tsx prisma/seed.dev.ts",
     "check:no-placeholders": "tsx scripts/check-no-placeholders.ts",
-    "openapi:generate": "tsx scripts/generate-openapi.ts"
+    "openapi:generate": "ts-node -r tsconfig-paths/register scripts/generate-openapi.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

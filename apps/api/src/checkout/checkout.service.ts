@@ -17,6 +17,7 @@ import {
   ReservationStatus as PrismaReservationStatus,
 } from '@prisma/client'
 import {
+  ALERT_SEVERITY,
   allocateProportionalDiscount,
   canTransitionOrderStatus,
   type CartTaxBreakdownDto,
@@ -43,6 +44,7 @@ import {
   isProductionRuntime,
   ORDER_STATUS,
   type OrderStatus,
+  OTP_PURPOSE,
   PAYMENT_METHOD,
   type PaymentStatus,
   PICKUP_CODE_MAX_ATTEMPTS,
@@ -53,6 +55,7 @@ import {
 import { CartRateLimitService } from '../cart/cart-rate-limit.service'
 import { SingleFlight } from '../common/single-flight'
 import { env } from '../env'
+import { OtpService } from '../otp/otp.service'
 import { PincodeService } from '../pincode/pincode.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProductCacheService } from '../products/products.cache'
@@ -130,6 +133,7 @@ export class CheckoutService {
     private readonly paymentGateway: PaymentGatewayService,
     private readonly queueService: QueueService,
     private readonly opsAlertService: OpsAlertService,
+    private readonly otpService: OtpService,
   ) {}
 
   private isProdRuntime(): boolean {
@@ -212,7 +216,11 @@ export class CheckoutService {
       resolvedPickupLocation = selected
 
       if (dto.paymentMethod === PAYMENT_METHOD.COD) {
-        if (!pricingSettings.payAtStoreEnabled || (isProd && !pricingSettings.codEnabled)) {
+        if (
+          !pricingSettings.payAtStoreEnabled ||
+          (isProd && !pricingSettings.codEnabled) ||
+          !this.settingsService.isSmsOtpReady()
+        ) {
           throw new BadRequestException('Pay at store is not enabled')
         }
       }
@@ -226,7 +234,7 @@ export class CheckoutService {
         throw new BadRequestException(`Sorry, delivery is not serviceable for ${address.pincode}.`)
       }
       if (dto.paymentMethod === PAYMENT_METHOD.COD) {
-        if (!pricingSettings.codEnabled) {
+        if (!pricingSettings.codEnabled || !this.settingsService.isSmsOtpReady()) {
           throw new BadRequestException('Cash on Delivery is currently disabled')
         }
         if (!pincodeCheck.codAllowed) {
@@ -304,6 +312,16 @@ export class CheckoutService {
               )
             }
             await tx.checkoutIdempotencyKey.delete({ where: { key: idempotencyKey } })
+          }
+
+          // Pre-submit OTP verification gate strictly for COD / Pay-at-store orders (online stays frictionless)
+          if (dto.paymentMethod === PAYMENT_METHOD.COD) {
+            await this.otpService.consumeVerificationTokenInTx(tx, {
+              token: dto.phoneVerificationToken,
+              phone: dto.contact.phone,
+              purpose: OTP_PURPOSE.COD_CHECKOUT,
+              sessionId: context.sessionId,
+            })
           }
 
           // Lock all variant rows in deterministic sorted UUID order to prevent deadlocks
@@ -574,19 +592,7 @@ export class CheckoutService {
             ? this.checkoutSecurity.createCheckoutTokenPair(orderId)
             : null
 
-          let plaintextPickupCode: string | null = null
-          let pickupCodeHash: string | null = null
-          let pickupReadyAt: Date | null = null
-
-          if (dto.fulfilmentMethod === FULFILMENT_METHOD.STORE_PICKUP && !isOnline) {
-            const codePair = this.checkoutSecurity.createPickupCodePair(orderId)
-            plaintextPickupCode = codePair.plaintextCode
-            pickupCodeHash = codePair.hmacHash
-            pickupReadyAt = new Date(
-              Date.now() + Math.max(1, resolvedPickupLocation!.prepTimeMinutes) * 60_000,
-            )
-          }
-
+          // Pickup codes are NEVER generated or shown at checkout; issued cleanly at READY_FOR_PICKUP
           const initialOrderStatus = isOnline
             ? PrismaOrderStatus.PENDING_PAYMENT
             : PrismaOrderStatus.COD_PENDING
@@ -609,8 +615,9 @@ export class CheckoutService {
                   ? PrismaFulfilmentMethod.STORE_PICKUP
                   : PrismaFulfilmentMethod.DELIVERY,
               pickup_location_id: resolvedPickupLocation?.id ?? null,
-              pickup_code_hash: pickupCodeHash,
-              pickup_ready_at: pickupReadyAt,
+              pickup_code_hash: null,
+              pickup_ready_at: null,
+              phone_verified_at: isOnline ? null : new Date(),
               checkout_token_hash: checkoutTokenPair?.tokenHash ?? null,
               dpdp_consent_at: new Date(),
               dpdp_policy_version: pricingSettings.dpdpPolicyVersion,
@@ -710,7 +717,7 @@ export class CheckoutService {
                   ),
                 }
               : null,
-            pickupCode: plaintextPickupCode,
+            pickupCode: null,
             reservationExpiresAt: isOnline ? expiresAt.toISOString() : null,
             needsAttention: false,
             dpdpPolicyVersion: pricingSettings.dpdpPolicyVersion,
@@ -1074,25 +1081,6 @@ export class CheckoutService {
           data: { status: PrismaReservationStatus.CONFIRMED },
         })
 
-        let plaintextPickupCode: string | null = null
-        let pickupCodeHash = lockedOrder.pickup_code_hash
-        let pickupReadyAt = lockedOrder.pickup_ready_at
-
-        if (
-          lockedOrder.fulfilment_method === PrismaFulfilmentMethod.STORE_PICKUP &&
-          !pickupCodeHash
-        ) {
-          const pair = this.checkoutSecurity.createPickupCodePair(lockedOrder.id)
-          plaintextPickupCode = pair.plaintextCode
-          pickupCodeHash = pair.hmacHash
-          const pickupLoc = pricingSettings.pickupLocations.find(
-            (l) => l.id === lockedOrder.pickup_location_id,
-          )
-          pickupReadyAt = new Date(
-            Date.now() + Math.max(1, pickupLoc?.prepTimeMinutes ?? 120) * 60_000,
-          )
-        }
-
         await this.upsertCapturedPayment(tx, {
           orderId: lockedOrder.id,
           gateway: this.paymentGateway.getMode(),
@@ -1111,8 +1099,6 @@ export class CheckoutService {
           data: {
             order_status: finalOrderStatus,
             payment_status: PrismaPaymentStatus.CAPTURED,
-            pickup_code_hash: pickupCodeHash,
-            pickup_ready_at: pickupReadyAt,
           },
         })
 
@@ -1136,12 +1122,7 @@ export class CheckoutService {
           })
         }
 
-        const summary = await this.loadOrderSummary(
-          tx,
-          lockedOrder.id,
-          plaintextPickupCode,
-          pricingSettings,
-        )
+        const summary = await this.loadOrderSummary(tx, lockedOrder.id, null, pricingSettings)
         return {
           kind: 'PAID' as const,
           summary,
@@ -1212,24 +1193,6 @@ export class CheckoutService {
           data: { status: PrismaReservationStatus.CONFIRMED },
         })
 
-        let plaintextPickupCode: string | null = null
-        let pickupCodeHash = lockedOrder.pickup_code_hash
-        let pickupReadyAt = lockedOrder.pickup_ready_at
-        if (
-          lockedOrder.fulfilment_method === PrismaFulfilmentMethod.STORE_PICKUP &&
-          !pickupCodeHash
-        ) {
-          const pair = this.checkoutSecurity.createPickupCodePair(lockedOrder.id)
-          plaintextPickupCode = pair.plaintextCode
-          pickupCodeHash = pair.hmacHash
-          const pickupLoc = pricingSettings.pickupLocations.find(
-            (l) => l.id === lockedOrder.pickup_location_id,
-          )
-          pickupReadyAt = new Date(
-            Date.now() + Math.max(1, pickupLoc?.prepTimeMinutes ?? 120) * 60_000,
-          )
-        }
-
         await this.upsertCapturedPayment(tx, {
           orderId: lockedOrder.id,
           gateway: this.paymentGateway.getMode(),
@@ -1245,8 +1208,6 @@ export class CheckoutService {
             order_status: PrismaOrderStatus.PAID,
             payment_status: PrismaPaymentStatus.CAPTURED,
             needs_attention: true,
-            pickup_code_hash: pickupCodeHash,
-            pickup_ready_at: pickupReadyAt,
           },
         })
 
@@ -1259,12 +1220,7 @@ export class CheckoutService {
           },
         })
 
-        const summary = await this.loadOrderSummary(
-          tx,
-          lockedOrder.id,
-          plaintextPickupCode,
-          pricingSettings,
-        )
+        const summary = await this.loadOrderSummary(tx, lockedOrder.id, null, pricingSettings)
         return {
           kind: 'PAID' as const,
           summary,
@@ -1332,8 +1288,9 @@ export class CheckoutService {
       if (txResult.summary.needsAttention) {
         void this.opsAlertService.alertCritical({
           alertKey: 'late-payment-reallocated',
-          severity: 'HIGH',
+          severity: ALERT_SEVERITY.WARNING,
           orderId: txResult.summary.id,
+          orderNumber: txResult.summary.orderNumber,
           message: `Late payment for order ${txResult.summary.orderNumber} re-allocated stock after expiry; paused in PAID for review`,
           details: { gatewayPaymentId: input.gatewayPaymentId, source: input.source },
         })
@@ -1410,20 +1367,23 @@ export class CheckoutService {
         event: 'ORDER_LATE_OOS_REFUNDED',
         orderId: updatedSummary.id,
         orderNumber: updatedSummary.orderNumber,
+        amountPaise: txResult.refundAmountPaise,
         message: `Late payment for ${updatedSummary.orderNumber} auto-refunded (${txResult.refundAmountPaise} paise) because stock ran out`,
       })
       void this.opsAlertService.alertCritical({
         alertKey: 'late-payment-oos-autorefund',
-        severity: 'HIGH',
+        severity: ALERT_SEVERITY.WARNING,
         orderId: updatedSummary.id,
+        orderNumber: updatedSummary.orderNumber,
         message: `Late payment arrived after stock ran out on order ${updatedSummary.orderNumber}; auto-refunded ${txResult.refundAmountPaise} paise`,
         details: { gatewayPaymentId: input.gatewayPaymentId, refundId: refund.refundId },
       })
     } else {
       void this.opsAlertService.alertCritical({
         alertKey: 'late-payment-oos-refund-failed',
-        severity: 'CRITICAL',
+        severity: ALERT_SEVERITY.CRITICAL,
         orderId: updatedSummary.id,
+        orderNumber: updatedSummary.orderNumber,
         message: `Late OOS auto-refund FAILED on order ${updatedSummary.orderNumber}; manual gateway refund required`,
         details: { gatewayPaymentId: input.gatewayPaymentId, error: refund.error },
       })
@@ -1498,9 +1458,10 @@ export class CheckoutService {
     if (order) {
       await this.opsAlertService.alertCritical({
         alertKey: 'payment-amount-currency-mismatch',
-        severity: 'CRITICAL',
+        severity: ALERT_SEVERITY.CRITICAL,
         orderId: order.id,
-        message: `CRITICAL: Payment mismatch on ${order.order_number}. Expected ${order.total_paise} INR, received ${input.actualAmountPaise} ${input.actualCurrency}. Do NOT auto-refund — human decision required.`,
+        orderNumber: order.order_number,
+        message: `Payment mismatch on ${order.order_number}. Expected ${order.total_paise} INR, received ${input.actualAmountPaise} ${input.actualCurrency}. Do NOT auto-refund — human decision required.`,
         details: {
           gatewayOrderId: input.gatewayOrderId,
           gatewayPaymentId: input.gatewayPaymentId,

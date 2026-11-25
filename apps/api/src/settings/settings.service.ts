@@ -13,7 +13,7 @@ import { env } from '../env'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 
-const SETTINGS_CACHE_KEY = 'settings:public:v4'
+const SETTINGS_CACHE_KEY = 'settings:public:v5'
 const SETTINGS_CACHE_TTL_SECONDS = 5
 
 const PUBLIC_SETTING_KEY_LIST = [
@@ -73,6 +73,19 @@ export class SettingsService {
       APP_ENV: env.APP_ENV,
       IS_PRODUCTION_DB: env.IS_PRODUCTION_DB,
     })
+  }
+
+  isSmsOtpReady(): boolean {
+    const isProd = this.isProdRuntime()
+    if (!isProd) {
+      if (env.SMS_PROVIDER === 'mock') return true
+    }
+    return Boolean(
+      env.SMS_PROVIDER === 'msg91' &&
+      env.MSG91_AUTH_KEY &&
+      env.MSG91_SENDER_ID &&
+      env.MSG91_DLT_TEMPLATE_OTP,
+    )
   }
 
   async invalidateCache(): Promise<void> {
@@ -217,6 +230,12 @@ export class SettingsService {
 
     const eligibleLocations = internal.storePickupEnabled ? internal.pickupLocations : []
     const storePickupAvailable = internal.storePickupEnabled && eligibleLocations.length > 0
+    const smsOtpReady = this.isSmsOtpReady()
+    const effectiveCodEnabled = isProd
+      ? internal.codEnabled && smsOtpReady
+      : internal.codEnabled && smsOtpReady
+    const effectivePayAtStoreEnabled =
+      storePickupAvailable && internal.payAtStoreEnabled && smsOtpReady
     const checkoutEnabled = isProd ? internal.legalPagesApproved : true
 
     return {
@@ -229,14 +248,16 @@ export class SettingsService {
       gstIncludedInPrice: internal.gstIncludedInPrice,
       showTaxBreakdown: internal.showTaxBreakdown,
       storePickupEnabled: storePickupAvailable,
-      payAtStoreEnabled: storePickupAvailable && internal.payAtStoreEnabled,
+      payAtStoreEnabled: effectivePayAtStoreEnabled,
       pickupLocations: storePickupAvailable ? eligibleLocations : [],
-      codEnabled: internal.codEnabled,
+      codEnabled: effectiveCodEnabled,
       codFeePaise: internal.codFeePaise,
-      codMaxOrderPaise: internal.codEnabled ? internal.codMaxOrderPaise : null,
+      codMaxOrderPaise: effectiveCodEnabled ? internal.codMaxOrderPaise : null,
       legalPagesApproved: internal.legalPagesApproved,
       dpdpPolicyVersion: internal.dpdpPolicyVersion,
       autoConfirmPaidOrders: internal.autoConfirmPaidOrders,
+      smsOtpReady,
+      turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? null,
       checkoutEnabled,
       paymentGateway: isProd ? 'razorpay' : env.PAYMENT_GATEWAY,
       fssaiNumber: internal.fssaiNumber,

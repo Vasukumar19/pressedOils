@@ -22,6 +22,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let statusCode = HttpStatus.INTERNAL_SERVER_ERROR
     let error = 'Internal Server Error'
     let message = 'An unexpected error occurred'
+    let code: string | undefined
+    let captchaRequired: boolean | undefined
     let details: unknown
 
     if (exception instanceof HttpException) {
@@ -39,6 +41,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
               ? body.message.join('; ')
               : exception.message
         error = typeof body.error === 'string' ? body.error : exception.name
+        if (typeof body.code === 'string') {
+          code = body.code
+        }
+        if (typeof body.captchaRequired === 'boolean') {
+          captchaRequired = body.captchaRequired
+        }
         if (body.details !== undefined) {
           details = body.details
         }
@@ -60,6 +68,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode,
       error,
       message,
+      ...(code !== undefined ? { code } : {}),
+      ...(captchaRequired !== undefined ? { captchaRequired } : {}),
       ...(details !== undefined ? { details } : {}),
       requestId,
       timestamp: new Date().toISOString(),

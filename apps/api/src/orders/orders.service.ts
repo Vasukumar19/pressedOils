@@ -2,10 +2,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common'
 import {
+  FulfilmentMethod as PrismaFulfilmentMethod,
   OrderStatus as PrismaOrderStatus,
   PaymentMethod as PrismaPaymentMethod,
   PaymentStatus as PrismaPaymentStatus,
@@ -17,22 +21,43 @@ import {
   type AdminCancelOrderResponseDto,
   adminCancelOrderResponseSchema,
   type AdminConfirmOrderDto,
+  type AdminOrderTransitionResponseDto,
+  adminOrderTransitionResponseSchema,
+  type AdminPackOrderDto,
+  type AdminPickupCompleteDto,
   type AdminRefundOrderDto,
   type AdminRefundOrderResponseDto,
   adminRefundOrderResponseSchema,
   type AdminReturnStockDto,
   type AdminReturnStockResponseDto,
   adminReturnStockResponseSchema,
+  type AdminShipOrderDto,
+  type AdminTestAlertDto,
+  type AdminTestAlertResponseDto,
+  adminTestAlertResponseSchema,
+  ALERT_SEVERITY,
   canTransitionOrderStatus,
+  formatDateIndia,
   ORDER_STATUS,
   type OrderStatus,
+  OTP_CONSTANTS,
+  OTP_PURPOSE,
+  type PickupCodeReissueRequestDto,
+  type PickupCodeReissueResponseDto,
+  pickupCodeReissueResponseSchema,
   STOCK_MOVEMENT_REASON,
 } from '@pressedoils/shared'
+import { CheckoutSecurityService } from '../checkout/checkout-security.service'
+import { CheckoutService } from '../checkout/checkout.service'
 import { PaymentGatewayService } from '../checkout/payment-gateway.service'
+import { env } from '../env'
+import { maskEmail, maskPhone } from '../notifications/notification.types'
+import { OtpService } from '../otp/otp.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProductCacheService } from '../products/products.cache'
 import { OpsAlertService } from '../queue/ops-alert.service'
 import { QueueService } from '../queue/queue.service'
+import { SettingsService } from '../settings/settings.service'
 
 const IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_-]{16,128}$/
 
@@ -51,6 +76,10 @@ export class OrdersService {
     private readonly productCacheService: ProductCacheService,
     private readonly queueService: QueueService,
     private readonly opsAlertService: OpsAlertService,
+    private readonly checkoutService: CheckoutService,
+    private readonly checkoutSecurity: CheckoutSecurityService,
+    private readonly otpService: OtpService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private async resolveActiveAdmin(adminEmail: string | undefined) {
@@ -399,8 +428,9 @@ export class OrdersService {
         })
         await this.opsAlertService.alertCritical({
           alertKey: 'admin-cancel-refund-failed',
-          severity: 'CRITICAL',
+          severity: ALERT_SEVERITY.CRITICAL,
           orderId: txOutcome.orderId,
+          orderNumber: txOutcome.orderNumber,
           message: `Admin cancelled order ${txOutcome.orderNumber}, but gateway refund failed: ${gwResult.error ?? 'unknown'}`,
           details: { refundId: pending.refundId, amountPaise: pending.amountPaise },
         })
@@ -816,6 +846,624 @@ export class OrdersService {
       orderId: outcome.orderId,
       restockedUnits: outcome.restockedUnits,
       writtenOffUnits: outcome.writtenOffUnits,
+    })
+  }
+
+  /**
+   * Transitions a CONFIRMED order to PACKED and enqueues the packed notification.
+   */
+  async packOrder(
+    orderId: string,
+    adminEmail: string | undefined,
+    dto: AdminPackOrderDto,
+  ): Promise<AdminOrderTransitionResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{
+          id: string
+          order_number: string
+          order_status: PrismaOrderStatus
+          fulfilment_method: PrismaFulfilmentMethod
+        }>
+      >`SELECT id, order_number, order_status, fulfilment_method FROM orders WHERE id = ${orderId} FOR UPDATE`
+
+      const order = lockedOrders[0]
+      if (!order) throw new NotFoundException('Order not found')
+
+      if (order.order_status === PrismaOrderStatus.PACKED) {
+        throw new ConflictException('Order is already marked PACKED')
+      }
+
+      if (
+        !canTransitionOrderStatus(
+          order.order_status as OrderStatus,
+          ORDER_STATUS.PACKED,
+          order.fulfilment_method,
+        )
+      ) {
+        throw new BadRequestException(`Cannot pack order in status ${order.order_status}`)
+      }
+
+      const note = dto.note?.trim() || 'Order freshly milled and packed'
+      await tx.order.update({
+        where: { id: order.id },
+        data: { order_status: PrismaOrderStatus.PACKED },
+      })
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.PACKED,
+          note,
+          actor: `admin:${admin.email}`,
+        },
+      })
+      await tx.auditLog.create({
+        data: {
+          admin_id: admin.id,
+          action: 'ORDER_PACKED',
+          entity: 'Order',
+          entity_id: order.id,
+          before: { orderStatus: order.order_status },
+          after: { orderStatus: ORDER_STATUS.PACKED, note },
+        },
+      })
+
+      return order
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'ORDER_PACKED',
+      orderId: result.id,
+      orderNumber: result.order_number,
+      message: `Order ${result.order_number} packed`,
+    })
+
+    return adminOrderTransitionResponseSchema.parse({
+      orderId: result.id,
+      orderNumber: result.order_number,
+      orderStatus: 'PACKED',
+    })
+  }
+
+  /**
+   * Transitions a PACKED DELIVERY order to SHIPPED, saves tracking URL, and dispatches notification.
+   */
+  async shipOrder(
+    orderId: string,
+    adminEmail: string | undefined,
+    dto: AdminShipOrderDto,
+  ): Promise<AdminOrderTransitionResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{
+          id: string
+          order_number: string
+          order_status: PrismaOrderStatus
+          fulfilment_method: PrismaFulfilmentMethod
+        }>
+      >`SELECT id, order_number, order_status, fulfilment_method FROM orders WHERE id = ${orderId} FOR UPDATE`
+
+      const order = lockedOrders[0]
+      if (!order) throw new NotFoundException('Order not found')
+
+      if (order.order_status === PrismaOrderStatus.SHIPPED) {
+        throw new ConflictException('Order is already shipped')
+      }
+
+      if (
+        !canTransitionOrderStatus(
+          order.order_status as OrderStatus,
+          ORDER_STATUS.SHIPPED,
+          order.fulfilment_method,
+        )
+      ) {
+        throw new BadRequestException(`Cannot ship order in status ${order.order_status}`)
+      }
+
+      const trackingUrl = dto.trackingUrl?.trim() ?? null
+      const note =
+        dto.note?.trim() || (trackingUrl ? `Order shipped (${trackingUrl})` : 'Order dispatched')
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          order_status: PrismaOrderStatus.SHIPPED,
+          ...(trackingUrl ? { tracking_url: trackingUrl } : {}),
+        },
+      })
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.SHIPPED,
+          note,
+          actor: `admin:${admin.email}`,
+        },
+      })
+      await tx.auditLog.create({
+        data: {
+          admin_id: admin.id,
+          action: 'ORDER_SHIPPED',
+          entity: 'Order',
+          entity_id: order.id,
+          before: { orderStatus: order.order_status },
+          after: { orderStatus: ORDER_STATUS.SHIPPED, trackingUrl, note },
+        },
+      })
+
+      return { order, trackingUrl }
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'ORDER_SHIPPED',
+      orderId: result.order.id,
+      orderNumber: result.order.order_number,
+      trackingUrl: result.trackingUrl,
+      message: `Order ${result.order.order_number} shipped`,
+    })
+
+    return adminOrderTransitionResponseSchema.parse({
+      orderId: result.order.id,
+      orderNumber: result.order.order_number,
+      orderStatus: 'SHIPPED',
+      trackingUrl: result.trackingUrl,
+    })
+  }
+
+  /**
+   * Transitions a PACKED STORE_PICKUP order to READY_FOR_PICKUP:
+   * generates a brand-new 6-digit HMAC pickup code, stores ONLY the hash, sets last collection date,
+   * and sends SMS + Email with order number, code, store hours, and last collection date.
+   */
+  async markReadyForPickup(
+    orderId: string,
+    adminEmail: string | undefined,
+  ): Promise<AdminOrderTransitionResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+    const settings = await this.settingsService.getInternalPricingSettings()
+
+    const now = new Date()
+    const holdDays = Math.max(1, settings.holdWindowDays)
+    const lastCollectionAt = new Date(now.getTime() + holdDays * 86_400_000)
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{
+          id: string
+          order_number: string
+          order_status: PrismaOrderStatus
+          fulfilment_method: PrismaFulfilmentMethod
+        }>
+      >`SELECT id, order_number, order_status, fulfilment_method FROM orders WHERE id = ${orderId} FOR UPDATE`
+
+      const order = lockedOrders[0]
+      if (!order) throw new NotFoundException('Order not found')
+
+      if (order.order_status === PrismaOrderStatus.READY_FOR_PICKUP) {
+        throw new ConflictException('Order is already marked READY_FOR_PICKUP')
+      }
+
+      if (
+        !canTransitionOrderStatus(
+          order.order_status as OrderStatus,
+          ORDER_STATUS.READY_FOR_PICKUP,
+          order.fulfilment_method,
+        )
+      ) {
+        throw new BadRequestException(
+          `Cannot mark order ready for pickup from status ${order.order_status}`,
+        )
+      }
+
+      const codePair = this.checkoutSecurity.createPickupCodePair(order.id)
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          order_status: PrismaOrderStatus.READY_FOR_PICKUP,
+          pickup_code_hash: codePair.hmacHash,
+          pickup_code_attempts: 0,
+          pickup_code_locked_until: null,
+          pickup_ready_at: now,
+          pickup_last_collection_at: lastCollectionAt,
+          pickup_code_last_sent_at: now,
+        },
+      })
+
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.READY_FOR_PICKUP,
+          note: `Order ready for pickup; pickup verification code issued (collect by ${formatDateIndia(lastCollectionAt)})`,
+          actor: `admin:${admin.email}`,
+        },
+      })
+
+      await tx.auditLog.create({
+        data: {
+          admin_id: admin.id,
+          action: 'ORDER_READY_FOR_PICKUP',
+          entity: 'Order',
+          entity_id: order.id,
+          before: { orderStatus: order.order_status },
+          after: {
+            orderStatus: ORDER_STATUS.READY_FOR_PICKUP,
+            lastCollectionDate: lastCollectionAt.toISOString(),
+          },
+        },
+      })
+
+      return { order, plaintextCode: codePair.plaintextCode }
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'ORDER_READY_FOR_PICKUP',
+      orderId: result.order.id,
+      orderNumber: result.order.order_number,
+      pickupCode: result.plaintextCode,
+      message: `Order ${result.order.order_number} ready for pickup`,
+    })
+
+    return adminOrderTransitionResponseSchema.parse({
+      orderId: result.order.id,
+      orderNumber: result.order.order_number,
+      orderStatus: 'READY_FOR_PICKUP',
+      lastCollectionDate: formatDateIndia(lastCollectionAt),
+    })
+  }
+
+  /**
+   * Transitions a SHIPPED DELIVERY order to DELIVERED and notifies customer.
+   */
+  async markDelivered(
+    orderId: string,
+    adminEmail: string | undefined,
+  ): Promise<AdminOrderTransitionResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{
+          id: string
+          order_number: string
+          order_status: PrismaOrderStatus
+          fulfilment_method: PrismaFulfilmentMethod
+        }>
+      >`SELECT id, order_number, order_status, fulfilment_method FROM orders WHERE id = ${orderId} FOR UPDATE`
+
+      const order = lockedOrders[0]
+      if (!order) throw new NotFoundException('Order not found')
+
+      if (order.order_status === PrismaOrderStatus.DELIVERED) {
+        throw new ConflictException('Order is already DELIVERED')
+      }
+
+      if (
+        !canTransitionOrderStatus(
+          order.order_status as OrderStatus,
+          ORDER_STATUS.DELIVERED,
+          order.fulfilment_method,
+        )
+      ) {
+        throw new BadRequestException(`Cannot mark delivered from status ${order.order_status}`)
+      }
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: { order_status: PrismaOrderStatus.DELIVERED },
+      })
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.DELIVERED,
+          note: 'Order delivered to customer',
+          actor: `admin:${admin.email}`,
+        },
+      })
+      await tx.auditLog.create({
+        data: {
+          admin_id: admin.id,
+          action: 'ORDER_DELIVERED',
+          entity: 'Order',
+          entity_id: order.id,
+          before: { orderStatus: order.order_status },
+          after: { orderStatus: ORDER_STATUS.DELIVERED },
+        },
+      })
+
+      return order
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'ORDER_DELIVERED',
+      orderId: result.id,
+      orderNumber: result.order_number,
+      message: `Order ${result.order_number} delivered`,
+    })
+
+    return adminOrderTransitionResponseSchema.parse({
+      orderId: result.id,
+      orderNumber: result.order_number,
+      orderStatus: 'DELIVERED',
+    })
+  }
+
+  /**
+   * Counter pickup verification (attempt-limited 6-digit pickup code OR orderNumber + photo ID fallback).
+   * Transitions READY_FOR_PICKUP -> PICKED_UP and notifies customer cleanly.
+   */
+  async completeStorePickup(
+    orderId: string,
+    adminEmail: string | undefined,
+    dto: AdminPickupCompleteDto,
+  ): Promise<AdminOrderTransitionResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+
+    const existing = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, order_number: true, order_status: true, fulfilment_method: true },
+    })
+    if (!existing) throw new NotFoundException('Order not found')
+    if (existing.order_status === PrismaOrderStatus.PICKED_UP) {
+      throw new ConflictException('Order was already picked up')
+    }
+    if (
+      !canTransitionOrderStatus(
+        existing.order_status as OrderStatus,
+        ORDER_STATUS.PICKED_UP,
+        existing.fulfilment_method,
+      )
+    ) {
+      throw new BadRequestException(`Cannot complete pickup from status ${existing.order_status}`)
+    }
+
+    if (dto.pickupCode) {
+      const check = await this.checkoutService.verifyPickupCodeAttempt(orderId, dto.pickupCode)
+      if (!check.valid) {
+        if (check.lockedUntil) {
+          throw new HttpException(
+            'Too many incorrect pickup code attempts. Verify order number with customer photo ID instead.',
+            HttpStatus.TOO_MANY_REQUESTS,
+          )
+        }
+        throw new BadRequestException(
+          'Invalid pickup verification code. Retry or verify order number + photo ID.',
+        )
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{ id: string; order_number: string; order_status: PrismaOrderStatus }>
+      >`SELECT id, order_number, order_status FROM orders WHERE id = ${orderId} FOR UPDATE`
+      const order = lockedOrders[0]
+      if (!order) throw new NotFoundException('Order not found')
+
+      if (order.order_status !== PrismaOrderStatus.READY_FOR_PICKUP) {
+        throw new ConflictException(`Order status changed to ${order.order_status}`)
+      }
+
+      const now = new Date()
+      const note = dto.pickupCode
+        ? 'Store pickup verified via 6-digit pickup code'
+        : `Store pickup verified via order number + photo ID fallback: ${dto.photoIdFallbackNote}`
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          order_status: PrismaOrderStatus.PICKED_UP,
+          picked_up_at: now,
+        },
+      })
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.PICKED_UP,
+          note,
+          actor: `admin:${admin.email}`,
+        },
+      })
+      await tx.auditLog.create({
+        data: {
+          admin_id: admin.id,
+          action: 'ORDER_PICKED_UP',
+          entity: 'Order',
+          entity_id: order.id,
+          before: { orderStatus: order.order_status },
+          after: {
+            orderStatus: ORDER_STATUS.PICKED_UP,
+            verificationMethod: dto.pickupCode ? 'PICKUP_CODE' : 'PHOTO_ID_FALLBACK',
+            note,
+          },
+        },
+      })
+      return order
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'ORDER_PICKED_UP',
+      orderId: updated.id,
+      orderNumber: updated.order_number,
+      message: `Order ${updated.order_number} picked up`,
+    })
+
+    return adminOrderTransitionResponseSchema.parse({
+      orderId: updated.id,
+      orderNumber: updated.order_number,
+      orderStatus: 'PICKED_UP',
+    })
+  }
+
+  /**
+   * Customer self-service pickup code rotation after OTP verification.
+   * Invalidates earlier codes immediately, enforces reissue cap/cooldown, and never logs plaintext code.
+   */
+  async reissuePickupCode(
+    dto: PickupCodeReissueRequestDto,
+    context: { ip: string; sessionId: string },
+  ): Promise<PickupCodeReissueResponseDto> {
+    if (!this.settingsService.isSmsOtpReady()) {
+      throw new ServiceUnavailableException('SMS service is unavailable for pickup code reissue')
+    }
+
+    const now = new Date()
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{
+          id: string
+          order_number: string
+          order_status: PrismaOrderStatus
+          fulfilment_method: PrismaFulfilmentMethod
+          customer_id: string
+          pickup_last_collection_at: Date | null
+          pickup_code_reissue_count: number
+          pickup_code_last_sent_at: Date | null
+        }>
+      >`SELECT id, order_number, order_status, fulfilment_method, customer_id, pickup_last_collection_at, pickup_code_reissue_count, pickup_code_last_sent_at FROM orders WHERE order_number = ${dto.orderNumber} FOR UPDATE`
+
+      const order = lockedOrders[0]
+      if (!order) {
+        throw new NotFoundException('Matching order not found')
+      }
+
+      const customer = await tx.customer.findUniqueOrThrow({
+        where: { id: order.customer_id },
+        select: { phone: true, email: true },
+      })
+      if (customer.phone !== dto.phone) {
+        throw new ForbiddenException('Phone number does not match order record')
+      }
+
+      if (
+        order.fulfilment_method !== PrismaFulfilmentMethod.STORE_PICKUP ||
+        order.order_status !== PrismaOrderStatus.READY_FOR_PICKUP
+      ) {
+        throw new BadRequestException(
+          'Pickup verification code is only issued once the store order is ready for pickup',
+        )
+      }
+
+      if (order.pickup_code_reissue_count >= OTP_CONSTANTS.PICKUP_CODE_REISSUE_MAX) {
+        throw new HttpException(
+          'Maximum pickup code reissue limit reached for this order. Collect at counter using your order number and photo ID.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        )
+      }
+
+      if (
+        order.pickup_code_last_sent_at &&
+        now.getTime() - order.pickup_code_last_sent_at.getTime() <
+          OTP_CONSTANTS.PICKUP_CODE_REISSUE_COOLDOWN_SECONDS * 1000
+      ) {
+        throw new HttpException(
+          `Please wait ${OTP_CONSTANTS.PICKUP_CODE_REISSUE_COOLDOWN_SECONDS} seconds before requesting another pickup code.`,
+          HttpStatus.TOO_MANY_REQUESTS,
+        )
+      }
+
+      await this.otpService.consumeVerificationTokenInTx(tx, {
+        token: dto.verificationToken,
+        phone: dto.phone,
+        purpose: OTP_PURPOSE.PICKUP_CODE_REISSUE,
+        sessionId: context.sessionId,
+      })
+
+      const codePair = this.checkoutSecurity.createPickupCodePair(order.id)
+      const nextCount = order.pickup_code_reissue_count + 1
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          pickup_code_hash: codePair.hmacHash,
+          pickup_code_attempts: 0,
+          pickup_code_locked_until: null,
+          pickup_code_reissue_count: nextCount,
+          pickup_code_last_sent_at: now,
+        },
+      })
+
+      await tx.orderEvent.create({
+        data: {
+          order_id: order.id,
+          status: PrismaOrderStatus.READY_FOR_PICKUP,
+          note: `Customer requested fresh pickup verification code (#${nextCount}; earlier code invalidated)`,
+          actor: 'customer:otp',
+        },
+      })
+
+      return {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        plaintextCode: codePair.plaintextCode,
+        phone: customer.phone,
+        email: customer.email,
+        lastCollectionDate: order.pickup_last_collection_at
+          ? formatDateIndia(order.pickup_last_collection_at)
+          : formatDateIndia(new Date(now.getTime() + 3 * 86_400_000)),
+      }
+    })
+
+    void this.queueService.enqueueCustomerNotification({
+      event: 'PICKUP_CODE_REISSUED',
+      orderId: result.orderId,
+      orderNumber: result.orderNumber,
+      pickupCode: result.plaintextCode,
+      message: `Rotated pickup code for ${result.orderNumber}`,
+    })
+
+    return pickupCodeReissueResponseSchema.parse({
+      orderNumber: result.orderNumber,
+      sent: true,
+      maskedPhone: maskPhone(result.phone),
+      maskedEmail: result.email ? maskEmail(result.email) : null,
+      lastCollectionDate: result.lastCollectionDate,
+    })
+  }
+
+  /**
+   * Non-production staging helper to test owner operational alerts end-to-end.
+   */
+  async triggerTestOwnerAlert(
+    adminEmail: string | undefined,
+    dto: AdminTestAlertDto,
+  ): Promise<AdminTestAlertResponseDto> {
+    const admin = await this.resolveActiveAdmin(adminEmail)
+    const alertKey = 'manual-test-alert'
+
+    await this.prisma.auditLog.create({
+      data: {
+        admin_id: admin.id,
+        action: 'TEST_OPS_ALERT',
+        entity: 'Alert',
+        entity_id: alertKey,
+        after: { severity: dto.severity, message: dto.message ?? null },
+      },
+    })
+
+    await this.opsAlertService.alertCritical({
+      alertKey,
+      severity: dto.severity,
+      message:
+        dto.message?.trim() ||
+        `Staging test ${dto.severity} operational alert triggered by ${admin.email}`,
+      bypassThrottle: true,
+    })
+
+    return adminTestAlertResponseSchema.parse({
+      sent: true,
+      severity: dto.severity,
+      alertKey,
+      channels: {
+        log: true,
+        emailRecipients: dto.severity === ALERT_SEVERITY.INFO ? 0 : env.OWNER_ALERT_EMAIL.length,
+        smsRecipients: dto.severity === ALERT_SEVERITY.CRITICAL ? env.OWNER_ALERT_PHONE.length : 0,
+        externalWebhook:
+          dto.severity === ALERT_SEVERITY.CRITICAL && Boolean(env.UPTIME_ALERT_WEBHOOK_URL),
+        sentry: dto.severity !== ALERT_SEVERITY.INFO && Boolean(env.SENTRY_DSN),
+      },
     })
   }
 }
