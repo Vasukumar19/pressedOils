@@ -1,5 +1,8 @@
 export const CURRENCY = 'INR' as const
 export const RESERVATION_TTL_MINUTES = 15 as const
+export const DEFAULT_MAX_QTY_PER_VARIANT = 10 as const
+export const DEFAULT_PAGE_SIZE = 12 as const
+export const MAX_PAGE_SIZE = 24 as const
 export const SIZE_LABELS = ['500 ml', '1 L', '5 L'] as const
 export type SizeLabel = (typeof SIZE_LABELS)[number]
 

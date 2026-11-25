@@ -9,6 +9,13 @@ export const paiseSchema = z
 
 export const positivePaiseSchema = paiseSchema.positive('Amount in paise must be greater than zero')
 
+/** Safe boolean query parser: only accepts true/false or 'true'/'false'. */
+export const booleanQueryParamSchema = z.preprocess((val) => {
+  if (val === 'true' || val === true) return true
+  if (val === 'false' || val === false) return false
+  return val
+}, z.boolean())
+
 /**
  * Indian 10-digit mobile number (starts with 6-9).
  * Accepts optional +91 / 91 / 0 prefix and spaces/hyphens, normalizes to +91XXXXXXXXXX.
@@ -67,3 +74,17 @@ export const imageUrlSchema = z
 export const productionImageUrlSchema = imageUrlSchema.refine((val) => !isPlaceholderUrl(val), {
   message: 'Placeholder images (/placeholders/) cannot be used in production',
 })
+
+export const apiErrorResponseSchema = z
+  .object({
+    statusCode: z.number().int(),
+    error: z.string(),
+    message: z.string(),
+    details: z.unknown().optional(),
+    requestId: z.string(),
+    timestamp: z.string(),
+    path: z.string(),
+  })
+  .strict()
+
+export type ApiErrorResponseDto = z.infer<typeof apiErrorResponseSchema>

@@ -3,6 +3,7 @@ import {
   canActivateProduct,
   canTransitionOrderStatus,
   checkoutRequestSchema,
+  computePublicAvailability,
   formatDateIndia,
   formatPaiseToInr,
   indianPhoneSchema,
@@ -10,7 +11,10 @@ import {
   isPlaceholderUrl,
   ORDER_STATUS,
   paiseSchema,
+  pincodeLookupResponseSchema,
+  productListQuerySchema,
   productionImageUrlSchema,
+  publicProductSchema,
   shouldShowSampleDataBanner,
 } from './index'
 
@@ -29,7 +33,6 @@ describe('money and currency helpers', () => {
   })
 
   it('formats dates in India timezone (Asia/Kolkata)', () => {
-    // 2026-01-15T20:00:00Z is 2026-01-16 01:30 IST
     const formatted = formatDateIndia('2026-01-15T20:00:00.000Z')
     expect(formatted).toContain('16')
     expect(formatted).toContain('Jan')
@@ -49,6 +52,83 @@ describe('Indian phone and pincode schemas', () => {
     expect(indianPincodeSchema.parse('600001')).toBe('600001')
     expect(() => indianPincodeSchema.parse('012345')).toThrow()
     expect(() => indianPincodeSchema.parse('60001')).toThrow()
+  })
+})
+
+describe('public stock visibility (computePublicAvailability)', () => {
+  it('hides exact count when stock exceeds lowStockThreshold', () => {
+    const avail = computePublicAvailability(50, 5, 5)
+    expect(avail).toEqual({ inStock: true, lowStock: false })
+    expect('availableStock' in avail).toBe(false)
+  })
+
+  it('reveals availableStock only when 1 <= available <= lowStockThreshold', () => {
+    expect(computePublicAvailability(10, 5, 5)).toEqual({
+      inStock: true,
+      lowStock: true,
+      availableStock: 5,
+    })
+    expect(computePublicAvailability(3, 0, 5)).toEqual({
+      inStock: true,
+      lowStock: true,
+      availableStock: 3,
+    })
+  })
+
+  it('returns sold out with no number when available is zero or clamped', () => {
+    const zero = computePublicAvailability(5, 5, 5)
+    expect(zero).toEqual({ inStock: false, lowStock: false })
+    expect('availableStock' in zero).toBe(false)
+
+    const clamped = computePublicAvailability(2, 5, 5)
+    expect(clamped).toEqual({ inStock: false, lowStock: false })
+  })
+})
+
+describe('list query and response strict contract validation', () => {
+  it('parses boolean query strings properly and rejects unknown query params', () => {
+    expect(productListQuerySchema.parse({ inStockOnly: 'false' }).inStockOnly).toBe(false)
+    expect(productListQuerySchema.parse({ inStockOnly: 'true' }).inStockOnly).toBe(true)
+    expect(() => productListQuerySchema.parse({ inStockOnly: 'yes' })).toThrow()
+    expect(() => productListQuerySchema.parse({ unknownParam: 'x' })).toThrow()
+  })
+
+  it('rejects minPricePaise > maxPricePaise and pageSize > 24', () => {
+    expect(() =>
+      productListQuerySchema.parse({ minPricePaise: '50000', maxPricePaise: '10000' }),
+    ).toThrow()
+    expect(() => productListQuerySchema.parse({ pageSize: '50' })).toThrow()
+  })
+
+  it('rejects leaking internal fields in publicProductSchema and pincodeLookupResponseSchema', () => {
+    expect(() =>
+      publicProductSchema.parse({
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        slug: 'groundnut-oil',
+        name: 'Groundnut Oil',
+        description: 'Cold pressed',
+        bestFor: 'Cooking',
+        originRegion: 'Pollachi',
+        sortOrder: 1,
+        brand: '[YOUR BRAND]',
+        images: [],
+        variants: [],
+        currentBatch: null,
+        leakedCostPaise: 5000,
+      }),
+    ).toThrow()
+
+    expect(
+      pincodeLookupResponseSchema.parse({
+        pincode: '600001',
+        serviceable: false,
+        city: null,
+        state: null,
+        deliveryDays: null,
+        codAllowed: false,
+        shippingPaise: null,
+      }).serviceable,
+    ).toBe(false)
   })
 })
 
@@ -127,7 +207,7 @@ describe('order status transitions and checkout validation', () => {
     expect(canTransitionOrderStatus(ORDER_STATUS.CANCELLED, ORDER_STATUS.PAID)).toBe(false)
   })
 
-  it('requires DPDP privacy consent on checkout', () => {
+  it('requires DPDP privacy consent on checkout and caps variant qty at 10', () => {
     const base = {
       contact: { name: 'Asha', phone: '9876543210', email: 'asha@example.com' },
       address: {
@@ -144,5 +224,11 @@ describe('order status transitions and checkout validation', () => {
     }
     expect(checkoutRequestSchema.parse(base).contact.phone).toBe('+919876543210')
     expect(() => checkoutRequestSchema.parse({ ...base, dpdpConsent: false })).toThrow()
+    expect(() =>
+      checkoutRequestSchema.parse({
+        ...base,
+        items: [{ variantId: '550e8400-e29b-41d4-a716-446655440000', qty: 11 }],
+      }),
+    ).toThrow()
   })
 })
