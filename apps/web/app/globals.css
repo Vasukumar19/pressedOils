@@ -16,6 +16,11 @@
   --color-background: #fcf9f3;
   --color-foreground: #33291f;
 
+  --color-error: #8b2f2f;
+  --color-error-bg: #fdf3f3;
+  --color-success: #2f5c3f;
+  --color-success-bg: #f0f7f2;
+
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
 

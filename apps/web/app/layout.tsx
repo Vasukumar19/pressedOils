@@ -1,6 +1,8 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Cormorant_Garamond, Inter } from 'next/font/google'
+import { SampleDataBanner } from '@/components/oil/sample-data-banner'
+import { getStorefrontShowSampleBanner } from '@/lib/env'
 import './globals.css'
 
 const serif = Cormorant_Garamond({
@@ -35,9 +37,12 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const showSampleBanner = getStorefrontShowSampleBanner()
+
   return (
     <html lang="en" className={`${serif.variable} ${sans.variable}`}>
       <body className="antialiased">
+        <SampleDataBanner show={showSampleBanner} />
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

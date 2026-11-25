@@ -1,4 +1,6 @@
 import Image from 'next/image'
+import Link from 'next/link'
+import type { PublicSettingsResponseDto } from '@pressedoils/shared'
 import { CONTACT, isReal } from '@/lib/content'
 import { MaskLines, Ph } from './primitives'
 
@@ -35,13 +37,13 @@ export function ClosingCta() {
             ]}
           />
         </h2>
-        <a
+        <Link
           data-reveal
-          href="#shop"
-          className="bg-gold text-forest hover:bg-champagne hover:text-ivory mt-12 inline-flex min-h-12 items-center px-9 text-[12px] font-semibold tracking-[0.22em] uppercase transition-colors"
+          href="/shop"
+          className="bg-gold text-forest hover:bg-champagne hover:text-ink mt-12 inline-flex min-h-12 items-center px-9 text-[12px] font-semibold tracking-[0.22em] uppercase transition-colors"
         >
           Explore the oils
-        </a>
+        </Link>
       </div>
     </section>
   )
@@ -62,12 +64,22 @@ function ContactLink({ label, value, href }: { label: string; value: string; hre
   )
 }
 
-export function Footer() {
+interface FooterProps {
+  settings?: PublicSettingsResponseDto
+}
+
+export function Footer({ settings }: FooterProps) {
+  const brandName = settings?.brandName || '[YOUR BRAND]'
+  const fssaiDisplay = settings?.fssaiNumber ? `FSSAI ${settings.fssaiNumber}` : 'FSSAI [NO.]'
+  const addressDisplay = settings?.registeredAddress || '[REGISTERED ADDRESS]'
+  const phoneDisplay = settings?.supportPhone || CONTACT.whatsapp
+  const emailDisplay = settings?.supportEmail || CONTACT.email
+
   return (
     <footer className="border-gold/40 bg-sand text-ink border-t px-5 pt-20 pb-10 md:px-10">
       <div className="mx-auto grid max-w-[1400px] gap-14 lg:grid-cols-12">
         <div className="lg:col-span-6">
-          <p className="font-serif text-5xl italic md:text-7xl">[YOUR BRAND]</p>
+          <p className="font-serif text-5xl italic md:text-7xl">{brandName}</p>
           <p className="text-bronze mt-4 font-serif text-2xl font-medium md:text-3xl">
             Good oil. An open kitchen.
           </p>
@@ -76,20 +88,20 @@ export function Footer() {
           <div className="space-y-3">
             <p className="text-bronze text-xs font-semibold tracking-[0.28em] uppercase">Licence</p>
             <p>
-              <Ph>FSSAI [NO.]</Ph>
+              <Ph>{fssaiDisplay}</Ph>
             </p>
             <p className="text-ink/75">
-              <Ph>[REGISTERED ADDRESS]</Ph>
+              <Ph>{addressDisplay}</Ph>
             </p>
           </div>
           <div className="space-y-3">
             <p className="text-bronze text-xs font-semibold tracking-[0.28em] uppercase">Contact</p>
             <ContactLink
               label="WhatsApp"
-              value={CONTACT.whatsapp}
-              href={`https://wa.me/${CONTACT.whatsapp.replace(/\D/g, '')}`}
+              value={phoneDisplay}
+              href={`https://wa.me/${phoneDisplay.replace(/\D/g, '')}`}
             />
-            <ContactLink label="Email" value={CONTACT.email} href={`mailto:${CONTACT.email}`} />
+            <ContactLink label="Email" value={emailDisplay} href={`mailto:${emailDisplay}`} />
           </div>
           <div className="space-y-3 sm:col-span-2">
             <p className="text-bronze text-xs font-semibold tracking-[0.28em] uppercase">
@@ -104,7 +116,7 @@ export function Footer() {
         </div>
       </div>
       <div className="border-gold/25 text-ink/55 mx-auto mt-16 max-w-[1400px] border-t pt-6 text-xs">
-        <Ph>© [YEAR] [YOUR BRAND]. Brand, licence and verification details pending.</Ph>
+        <Ph>{`© ${new Date().getFullYear()} ${brandName}. Cold-pressed oils brewed in small batches.`}</Ph>
       </div>
     </footer>
   )

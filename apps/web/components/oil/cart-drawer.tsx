@@ -2,14 +2,26 @@
 
 import { useEffect, useRef } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
+import { formatPaiseToInr } from '@pressedoils/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { Minus, Plus, ShoppingBag, X } from 'lucide-react'
 import { useCart } from '@/lib/cart'
 import { lockScroll } from '@/lib/lenis'
-import { formatPrice, getProduct } from '@/lib/products'
 
 export function CartDrawer() {
-  const { lines, count, subtotal, hasUnpriced, isOpen, setOpen, setQty, remove } = useCart()
+  const {
+    lines,
+    count,
+    subtotalPaise,
+    isOpen,
+    setOpen,
+    setQty,
+    remove,
+    maxOrderQtyPerVariant,
+    freeShippingThresholdPaise,
+    hasUnresolvedItems,
+  } = useCart()
   const closeRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -25,6 +37,9 @@ export function CartDrawer() {
       previous?.focus()
     }
   }, [isOpen, setOpen])
+
+  const remainingForFreeShipping =
+    freeShippingThresholdPaise > 0 ? Math.max(0, freeShippingThresholdPaise - subtotalPaise) : 0
 
   return (
     <AnimatePresence>
@@ -73,50 +88,71 @@ export function CartDrawer() {
               {lines.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-4 py-16 text-center">
                   <ShoppingBag className="text-gold size-10" strokeWidth={1.2} aria-hidden />
-                  <p className="font-serif text-3xl font-medium italic">Your bag is empty.</p>
-                  <a
-                    href="#shop"
+                  <p className="font-serif text-3xl font-medium italic">
+                    {hasUnresolvedItems ? 'Syncing your bag…' : 'Your bag is empty.'}
+                  </p>
+                  <Link
+                    href="/shop"
                     onClick={() => setOpen(false)}
                     className="link-underline pb-1 text-[12px] font-semibold tracking-[0.2em] uppercase"
                   >
                     Explore the oils
-                  </a>
+                  </Link>
                 </div>
               ) : (
                 <ul className="divide-forest/15 divide-y">
                   {lines.map((line) => {
-                    const product = getProduct(line.productId)
-                    if (!product) return null
-                    const unit = product.prices[line.size]
+                    const atLimit = line.qty >= maxOrderQtyPerVariant
+                    const outOfStock = !line.availability.inStock
                     return (
-                      <li key={`${line.productId}-${line.size}`} className="flex gap-4 py-6">
-                        <div className="bg-forest relative h-28 w-20 shrink-0 overflow-hidden">
-                          <Image
-                            src={product.image}
-                            alt={product.imageAlt}
-                            fill
-                            sizes="80px"
-                            className="object-cover"
-                          />
-                        </div>
+                      <li key={line.variantId} className="flex gap-4 py-6">
+                        <Link
+                          href={`/products/${line.productSlug}`}
+                          onClick={() => setOpen(false)}
+                          className="bg-sand relative h-28 w-20 shrink-0 overflow-hidden"
+                        >
+                          {line.imageUrl ? (
+                            <Image
+                              src={line.imageUrl}
+                              alt={line.imageAlt}
+                              fill
+                              sizes="80px"
+                              className="object-cover"
+                            />
+                          ) : null}
+                        </Link>
                         <div className="flex min-w-0 flex-1 flex-col">
-                          <p className="font-serif text-2xl leading-tight font-medium">
-                            {product.name}
+                          <Link
+                            href={`/products/${line.productSlug}`}
+                            onClick={() => setOpen(false)}
+                            className="hover:text-bronze font-serif text-2xl leading-tight font-medium transition-colors"
+                          >
+                            {line.productName}
+                          </Link>
+                          <p className="text-sage mt-1 text-sm">{line.sizeLabel}</p>
+                          <p className="mt-1 text-sm font-medium tabular-nums">
+                            {formatPaiseToInr(line.lineTotalPaise)}
+                            <span className="text-sage ml-2 text-xs font-normal">
+                              ({formatPaiseToInr(line.unitPricePaise)} each)
+                            </span>
                           </p>
-                          <p className="text-sage mt-1 text-sm">{line.size}</p>
-                          <p className="mt-1 text-sm">
-                            {unit === null ? (
-                              <span className="ph">[PRICE]</span>
-                            ) : (
-                              formatPrice(unit * line.qty)
-                            )}
-                          </p>
+                          {outOfStock ? (
+                            <p className="text-error mt-1 text-xs font-medium">
+                              Currently sold out
+                            </p>
+                          ) : line.availability.lowStock &&
+                            line.availability.availableStock !== undefined ? (
+                            <p className="text-bronze mt-1 text-xs font-medium">
+                              Only {line.availability.availableStock} left
+                            </p>
+                          ) : null}
+
                           <div className="mt-auto flex items-center justify-between pt-3">
                             <div className="border-forest/30 flex items-center border">
                               <button
                                 type="button"
-                                aria-label={`Decrease ${product.name} ${line.size}`}
-                                onClick={() => setQty(line.productId, line.size, line.qty - 1)}
+                                aria-label={`Decrease ${line.productName} ${line.sizeLabel}`}
+                                onClick={() => setQty(line.variantId, line.qty - 1)}
                                 className="hover:bg-gold/30 flex size-11 items-center justify-center"
                               >
                                 <Minus className="size-4" />
@@ -129,16 +165,17 @@ export function CartDrawer() {
                               </span>
                               <button
                                 type="button"
-                                aria-label={`Increase ${product.name} ${line.size}`}
-                                onClick={() => setQty(line.productId, line.size, line.qty + 1)}
-                                className="hover:bg-gold/30 flex size-11 items-center justify-center"
+                                aria-label={`Increase ${line.productName} ${line.sizeLabel}`}
+                                disabled={atLimit || outOfStock}
+                                onClick={() => setQty(line.variantId, line.qty + 1)}
+                                className="hover:bg-gold/30 flex size-11 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 <Plus className="size-4" />
                               </button>
                             </div>
                             <button
                               type="button"
-                              onClick={() => remove(line.productId, line.size)}
+                              onClick={() => remove(line.variantId)}
                               className="text-sage hover:text-forest min-h-11 px-2 text-xs tracking-[0.18em] uppercase underline-offset-4 hover:underline"
                             >
                               Remove
@@ -154,31 +191,31 @@ export function CartDrawer() {
 
             {lines.length > 0 && (
               <footer className="border-forest/15 border-t px-6 py-6">
+                {freeShippingThresholdPaise > 0 ? (
+                  <p className="text-sage mb-3 text-xs">
+                    {remainingForFreeShipping === 0
+                      ? 'Qualifies for complimentary delivery.'
+                      : `Add ${formatPaiseToInr(remainingForFreeShipping)} more for complimentary delivery.`}
+                  </p>
+                ) : null}
                 <div className="flex items-baseline justify-between">
                   <span className="text-xs font-semibold tracking-[0.24em] uppercase">
                     Subtotal
                   </span>
-                  <span className="font-serif text-3xl font-medium">
-                    {hasUnpriced && subtotal === 0 ? (
-                      <span className="ph">[PRICE]</span>
-                    ) : (
-                      formatPrice(subtotal)
-                    )}
+                  <span className="font-serif text-3xl font-medium tabular-nums">
+                    {formatPaiseToInr(subtotalPaise)}
                   </span>
                 </div>
-                {hasUnpriced && (
-                  <p className="text-sage mt-2 text-xs">
-                    Price &amp; availability to be confirmed.
-                  </p>
-                )}
                 <button
                   type="button"
                   disabled
                   className="bg-forest/40 text-ivory mt-5 min-h-12 w-full cursor-not-allowed text-[12px] font-semibold tracking-[0.2em] uppercase"
                 >
-                  Checkout not connected
+                  Checkout not yet active
                 </button>
-                <p className="text-sage mt-3 text-xs">Preview only. No order is placed.</p>
+                <p className="text-sage mt-3 text-xs">
+                  Bag items are priced live from the catalog. Checkout opens in Phase 5.
+                </p>
               </footer>
             )}
           </motion.aside>

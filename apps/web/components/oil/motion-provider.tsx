@@ -6,16 +6,34 @@ import 'lenis/dist/lenis.css'
 import { gsap, ScrollTrigger, prefersReducedMotion } from '@/lib/gsap'
 import { setLenis } from '@/lib/lenis'
 
-function Curtain() {
+const CURTAIN_SEEN_KEY = 'pressedoils:curtain-seen'
+
+function hasSeenCurtain(): boolean {
+  try {
+    return window.sessionStorage.getItem(CURTAIN_SEEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function Curtain({ brandName = '[YOUR BRAND]' }: { brandName?: string }) {
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = root.current
     if (!el) return
-    if (prefersReducedMotion()) {
+
+    if (prefersReducedMotion() || hasSeenCurtain()) {
       el.style.display = 'none'
       return
     }
+
+    try {
+      window.sessionStorage.setItem(CURTAIN_SEEN_KEY, '1')
+    } catch {
+      // Ignore storage write errors in restricted browsing modes
+    }
+
     const ctx = gsap.context(() => {
       gsap
         .timeline({
@@ -36,7 +54,6 @@ function Curtain() {
     return () => ctx.revert()
   }, [])
 
-  const brand = '[YOUR BRAND]'
   return (
     <div
       ref={root}
@@ -45,7 +62,7 @@ function Curtain() {
     >
       <div data-curtain-brand className="flex flex-col items-center gap-5 px-6 text-center">
         <span className="text-ink flex overflow-hidden pb-2 font-serif text-4xl italic md:text-6xl">
-          {brand.split('').map((ch, i) => (
+          {brandName.split('').map((ch, i) => (
             <span key={i} data-curtain-char className="inline-block whitespace-pre">
               {ch}
             </span>
@@ -57,7 +74,13 @@ function Curtain() {
   )
 }
 
-export function MotionProvider({ children }: { children: ReactNode }) {
+export function MotionProvider({
+  children,
+  brandName,
+}: {
+  children: ReactNode
+  brandName?: string
+}) {
   useEffect(() => {
     const reduce = prefersReducedMotion()
     let lenis: Lenis | null = null
@@ -195,7 +218,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <Curtain />
+      <Curtain brandName={brandName} />
       {children}
     </>
   )
