@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing'
 import Redis from 'ioredis'
 import {
   apiErrorResponseSchema,
+  cartValidateResponseSchema,
   healthLivenessResponseSchema,
   healthReadinessResponseSchema,
   pincodeLookupResponseSchema,
@@ -201,7 +202,7 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
 
   it('GET /api/settings returns whitelisted settings and enforces production banner rule', async () => {
     const res = await request(app.getHttpServer()).get('/api/settings').expect(200)
-    expect(res.headers['cache-control']).toContain('max-age=60')
+    expect(res.headers['cache-control']).toContain('max-age=5')
     expect(res.headers['etag']).toBeTruthy()
     const parsed = publicSettingsResponseSchema.parse(res.body)
     expect(parsed.currency).toBe('INR')
@@ -261,5 +262,163 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       }
     }
     expect(hit429).toBe(true)
+  })
+
+  it('POST /api/cart/validate ignores price tampering, enforces free shipping threshold transitions & coupon math, hides counts > threshold, and rate-limits invalid coupons', async () => {
+    // 1. Default settings: freeShippingEnabled = false (threshold MUST NOT be exposed), showTaxBreakdown = false
+    const defaultSettings = await request(app.getHttpServer()).get('/api/settings').expect(200)
+    const parsedSettings = publicSettingsResponseSchema.parse(defaultSettings.body)
+    expect(parsedSettings.freeShippingEnabled).toBe(false)
+    expect(parsedSettings.freeShippingThresholdPaise).toBeNull()
+    expect(parsedSettings.showTaxBreakdown).toBe(false)
+
+    // Load a real seeded 1L variant (price 20000 = Rs 200)
+    const productsRes = await request(app.getHttpServer())
+      .get('/api/products?pageSize=6')
+      .expect(200)
+    const variant1L = productsRes.body.items[0].variants.find(
+      (v: { sizeLabel: string }) => v.sizeLabel === '1 L',
+    )
+    expect(variant1L).toBeTruthy()
+
+    // 2. Reject unknown/tampered price field in strict Zod payload
+    await request(app.getHttpServer())
+      .post('/api/cart/validate')
+      .send({
+        items: [{ variantId: variant1L.id, qty: 2, unitPricePaise: 1 }],
+        fulfilmentMethod: 'DELIVERY',
+      })
+      .expect(400)
+
+    // 3. Valid validate mints X-Cart-Session header & respects freeShipping off + "Items total" without pincode
+    const cartNoPin = await request(app.getHttpServer())
+      .post('/api/cart/validate')
+      .set('Origin', 'http://localhost:3000')
+      .send({
+        items: [{ variantId: variant1L.id, qty: 5 }], // 5 * 20000 = 100000 paise (Rs 1000)
+        fulfilmentMethod: 'DELIVERY',
+      })
+      .expect(200)
+
+    expect(cartNoPin.headers['cache-control']).toBe('no-store')
+    expect(cartNoPin.headers['x-cart-session']).toBeTruthy()
+    expect(cartNoPin.headers['access-control-allow-origin']).toBe('http://localhost:3000')
+
+    const parsedNoPin = cartValidateResponseSchema.parse(cartNoPin.body)
+    expect(parsedNoPin.freeShipping).toBeNull()
+    expect(parsedNoPin.tax).toEqual({ showTaxBreakdown: false })
+    expect(parsedNoPin.summary.totalLabel).toBe('Items total')
+    expect(parsedNoPin.summary.shippingStatus).toBe('ENTER_PINCODE')
+    expect(parsedNoPin.summary.totalPaise).toBe(100000)
+
+    const sessionToken = cartNoPin.headers['x-cart-session'] as string
+
+    // 4. Owner turns ON free shipping (threshold 99900 paise) via protected endpoint -> STAFF denied, OWNER allowed + audit logged
+    const prevOwnerSecret = env.OWNER_SETTINGS_SECRET
+    env.OWNER_SETTINGS_SECRET = 'integration-owner-secret-123'
+    try {
+      await prisma.admin.upsert({
+        where: { email: 'staff-test@example.invalid' },
+        update: { role: 'STAFF', is_active: true },
+        create: { email: 'staff-test@example.invalid', role: 'STAFF', is_active: true },
+      })
+
+      await request(app.getHttpServer())
+        .patch('/api/admin/settings')
+        .set('x-admin-secret', env.OWNER_SETTINGS_SECRET)
+        .set('x-admin-email', 'staff-test@example.invalid')
+        .send({ freeShipping: { enabled: true, thresholdPaise: 99900 } })
+        .expect(403)
+
+      const toggledOn = await request(app.getHttpServer())
+        .patch('/api/admin/settings')
+        .set('x-admin-secret', env.OWNER_SETTINGS_SECRET)
+        .set('x-admin-email', 'owner-dev@example.invalid')
+        .send({ freeShipping: { enabled: true, thresholdPaise: 99900 } })
+        .expect(200)
+      expect(toggledOn.body.freeShippingEnabled).toBe(true)
+      expect(toggledOn.body.freeShippingThresholdPaise).toBe(99900)
+
+      // Boundary: 5 * 20000 = 100000 >= 99900 -> Free shipping!
+      const freeQual = await request(app.getHttpServer())
+        .post('/api/cart/validate')
+        .set('x-cart-session', sessionToken)
+        .send({
+          items: [{ variantId: variant1L.id, qty: 5 }],
+          fulfilmentMethod: 'DELIVERY',
+          pincode: '600001',
+        })
+        .expect(200)
+      expect(freeQual.body.freeShipping.qualified).toBe(true)
+      expect(freeQual.body.summary.shippingPaise).toBe(0)
+      expect(freeQual.body.summary.totalPaise).toBe(100000)
+
+      // Apply SAMPLE10 (10% off 100000 -> net 90000 < 99900) -> drops below free-shipping threshold!
+      const couponDropped = await request(app.getHttpServer())
+        .post('/api/cart/validate')
+        .set('x-cart-session', sessionToken)
+        .send({
+          items: [{ variantId: variant1L.id, qty: 5 }],
+          couponCode: 'sample10',
+          fulfilmentMethod: 'DELIVERY',
+          pincode: '600001',
+        })
+        .expect(200)
+      expect(couponDropped.body.coupon.applied).toBe(true)
+      expect(couponDropped.body.summary.discountPaise).toBe(10000)
+      expect(couponDropped.body.summary.netItemsTotalPaise).toBe(90000)
+      expect(couponDropped.body.freeShipping.qualified).toBe(false)
+      expect(couponDropped.body.freeShipping.remainingPaise).toBe(9900)
+      expect(couponDropped.body.summary.shippingPaise).toBe(5000)
+      expect(couponDropped.body.summary.totalPaise).toBe(95000)
+      // Verify used_count was NOT incremented by /cart/validate
+      const couponRow = await prisma.coupon.findUnique({ where: { code: 'SAMPLE10' } })
+      expect(couponRow?.used_count).toBe(0)
+
+      // Toggling freeShipping back off takes effect immediately
+      const toggledOff = await request(app.getHttpServer())
+        .patch('/api/admin/settings')
+        .set('x-admin-secret', env.OWNER_SETTINGS_SECRET)
+        .set('x-admin-email', 'owner-dev@example.invalid')
+        .send({ freeShipping: { enabled: false } })
+        .expect(200)
+      expect(toggledOff.body.freeShippingEnabled).toBe(false)
+      expect(toggledOff.body.freeShippingThresholdPaise).toBeNull()
+
+      const afterOff = await request(app.getHttpServer())
+        .post('/api/cart/validate')
+        .set('x-cart-session', sessionToken)
+        .send({
+          items: [{ variantId: variant1L.id, qty: 5 }],
+          fulfilmentMethod: 'DELIVERY',
+          pincode: '600001',
+        })
+        .expect(200)
+      expect(afterOff.body.freeShipping).toBeNull()
+      expect(afterOff.body.summary.shippingPaise).toBe(5000)
+
+      // 5. Invalid coupon guessing hits 429 after 10 attempts
+      let couponHit429 = false
+      for (let i = 0; i < 12; i += 1) {
+        const res = await request(app.getHttpServer())
+          .post('/api/cart/validate')
+          .set('x-cart-session', sessionToken)
+          .send({
+            items: [{ variantId: variant1L.id, qty: 1 }],
+            couponCode: `BADCODE${i}`,
+            fulfilmentMethod: 'DELIVERY',
+          })
+        if (res.status === 429) {
+          couponHit429 = true
+          break
+        }
+        expect(res.body.coupon.message).toBe("This code isn't valid")
+      }
+      expect(couponHit429).toBe(true)
+
+      await prisma.admin.deleteMany({ where: { email: 'staff-test@example.invalid' } })
+    } finally {
+      env.OWNER_SETTINGS_SECRET = prevOwnerSecret
+    }
   })
 })

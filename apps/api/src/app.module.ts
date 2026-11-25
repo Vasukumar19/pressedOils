@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { ThrottlerModule } from '@nestjs/throttler'
 import { LoggerModule } from 'nestjs-pino'
+import { CartModule } from './cart/cart.module'
 import { ThrottlerIpGuard } from './common/throttler-ip.guard'
 import { env } from './env'
 import { HealthModule } from './health/health.module'
@@ -24,6 +25,7 @@ import { SettingsModule } from './settings/settings.module'
             'req.headers.authorization',
             'req.headers.cookie',
             'req.headers["x-api-key"]',
+            'req.headers["x-admin-secret"]',
             '*.password',
             '*.passwordHash',
             '*.token',
@@ -48,6 +50,7 @@ import { SettingsModule } from './settings/settings.module'
     ProductsModule,
     PincodeModule,
     SettingsModule,
+    CartModule,
   ],
   providers: [
     {

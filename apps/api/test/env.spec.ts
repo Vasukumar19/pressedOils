@@ -40,6 +40,7 @@ describe('validateEnv', () => {
       REDIS_URL: 'redis://redis.internal:6379',
       SWAGGER_USER: 'reviewer',
       SWAGGER_PASSWORD: 'super-secret-staging-pw',
+      CART_SESSION_SECRET: 'staging-cart-session-secret-1234',
     })
     expect(valid.APP_ENV).toBe('staging')
   })

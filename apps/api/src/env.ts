@@ -64,8 +64,19 @@ const envSchema = z
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
       ),
+    CART_SESSION_SECRET: z.string().trim().min(16).optional(),
+    OWNER_SETTINGS_SECRET: z.string().trim().min(16).optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.APP_ENV === 'production' || data.APP_ENV === 'staging') {
+      if (!data.CART_SESSION_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['CART_SESSION_SECRET'],
+          message: 'CART_SESSION_SECRET is required in staging and production',
+        })
+      }
+    }
     if (data.NODE_ENV !== 'test') {
       if (!data.DATABASE_URL) {
         ctx.addIssue({

@@ -42,6 +42,18 @@ export class ResilientThrottlerStorage implements ThrottlerStorage {
     return this.incrementInMemory(redisKey, ttl, limit, blockDuration)
   }
 
+  async getCurrentHits(key: string, throttlerName: string): Promise<number> {
+    const redisKey = `rl:${throttlerName}:${key}`
+    const val = await this.redis.getString(redisKey)
+    if (val !== null) {
+      const parsed = Number(val)
+      return Number.isFinite(parsed) ? parsed : 0
+    }
+    const existing = this.fallbackBuckets.get(redisKey)
+    if (!existing || existing.expiresAt <= Date.now()) return 0
+    return existing.hits
+  }
+
   private incrementInMemory(
     key: string,
     ttlMs: number,

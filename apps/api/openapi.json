@@ -194,6 +194,71 @@
         "summary": "Get public store info, thresholds, and GST configuration",
         "tags": ["settings"]
       }
+    },
+    "/api/admin/settings": {
+      "patch": {
+        "operationId": "AdminSettingsController_updateSettings",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated public settings snapshot (audit logged)"
+          },
+          "403": {
+            "description": "Forbidden: invalid secret or non-OWNER admin"
+          },
+          "503": {
+            "description": "OWNER_SETTINGS_SECRET not configured"
+          }
+        },
+        "summary": "Owner-only pre-Phase-9 settings switch (free shipping promo, pickup, tax display)",
+        "tags": ["admin-settings"]
+      }
+    },
+    "/api/cart/validate": {
+      "post": {
+        "operationId": "CartController_validate",
+        "parameters": [
+          {
+            "name": "x-cart-session",
+            "in": "header",
+            "description": "HMAC-signed anonymous cart session token issued by the API",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authoritative server-computed cart breakdown"
+          },
+          "400": {
+            "description": "Invalid input or unavailable store pickup selection"
+          },
+          "429": {
+            "description": "Cart validation or invalid coupon rate limit exceeded"
+          }
+        },
+        "summary": "Validate cart items, quantities, live PostgreSQL prices/stock, coupons, pincode shipping, and store pickup",
+        "tags": ["cart"]
+      }
     }
   },
   "info": {
@@ -212,12 +277,20 @@
       "description": "Catalog, product detail, and live availability"
     },
     {
+      "name": "cart",
+      "description": "Server cart validation, pricing, coupons, and fulfilment checks"
+    },
+    {
       "name": "pincode",
       "description": "Delivery serviceability, TAT, COD, and shipping fees"
     },
     {
       "name": "settings",
       "description": "Public store configuration and thresholds"
+    },
+    {
+      "name": "admin-settings",
+      "description": "Protected owner settings controls (pre-Phase 9)"
     }
   ],
   "servers": [],

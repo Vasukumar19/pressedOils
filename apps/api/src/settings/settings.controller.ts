@@ -18,6 +18,6 @@ export class SettingsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<PublicSettingsResponseDto | void> {
     const data = await this.settingsService.getPublicSettings()
-    return sendWithHttpCache(req, res, data, 'public, max-age=60, s-maxage=300')
+    return sendWithHttpCache(req, res, data, 'public, max-age=5, s-maxage=5')
   }
 }

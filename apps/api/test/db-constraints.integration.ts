@@ -31,6 +31,7 @@ async function cleanDatabase() {
   await prisma.productImage.deleteMany()
   await prisma.product.deleteMany()
   await prisma.coupon.deleteMany()
+  await prisma.pickupLocation.deleteMany()
   await prisma.serviceablePincode.deleteMany()
   await prisma.setting.deleteMany()
   await prisma.admin.deleteMany()

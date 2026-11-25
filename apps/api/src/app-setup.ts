@@ -14,8 +14,10 @@ export function buildOpenApiConfig() {
     .setVersion('0.2.0')
     .addTag('health', 'Liveness and readiness probes')
     .addTag('products', 'Catalog, product detail, and live availability')
+    .addTag('cart', 'Server cart validation, pricing, coupons, and fulfilment checks')
     .addTag('pincode', 'Delivery serviceability, TAT, COD, and shipping fees')
     .addTag('settings', 'Public store configuration and thresholds')
+    .addTag('admin-settings', 'Protected owner settings controls (pre-Phase 9)')
     .build()
 }
 
@@ -47,7 +49,9 @@ export function configureApp(app: INestApplication, currentEnv: Env): void {
       callback(null, currentEnv.CORS_ORIGINS.includes(origin))
     },
     credentials: false,
-    methods: ['GET', 'HEAD', 'OPTIONS'],
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-Cart-Session', 'X-Admin-Secret', 'X-Admin-Email'],
+    exposedHeaders: ['X-Request-Id', 'X-Cart-Session'],
   })
 
   // Swagger UI: enabled in dev, gated by auth/IP allowlist in staging, disabled in production

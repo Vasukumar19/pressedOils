@@ -1,0 +1,191 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common'
+import { AdminRole, type Prisma } from '@prisma/client'
+import { type OwnerUpdateSettingsDto, SETTING_KEYS } from '@pressedoils/shared'
+import { PrismaService } from '../prisma/prisma.service'
+import { SettingsService } from './settings.service'
+
+@Injectable()
+export class OwnerSettingsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settingsService: SettingsService,
+  ) {}
+
+  private async resolveOwnerAdmin(ownerEmail: string) {
+    const normalizedEmail = ownerEmail.trim().toLowerCase()
+    if (!normalizedEmail) {
+      throw new ForbiddenException('Owner admin email is required')
+    }
+
+    const admin = await this.prisma.admin.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true, role: true, is_active: true },
+    })
+
+    if (!admin || !admin.is_active || admin.role !== AdminRole.OWNER) {
+      throw new ForbiddenException('Only active OWNER admins may modify store settings')
+    }
+
+    return admin
+  }
+
+  async updateOwnerSettings(ownerEmail: string, dto: OwnerUpdateSettingsDto) {
+    const owner = await this.resolveOwnerAdmin(ownerEmail)
+    const keysToRead: string[] = []
+    if (dto.freeShipping) {
+      keysToRead.push(SETTING_KEYS.FREE_SHIPPING_CONFIG, SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE)
+    }
+    if (dto.storePickup) keysToRead.push(SETTING_KEYS.STORE_PICKUP_CONFIG)
+    if (dto.taxDisplay) keysToRead.push(SETTING_KEYS.TAX_DISPLAY_CONFIG)
+
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.setting.findMany({
+        where: { key: { in: keysToRead } },
+      })
+      const existingMap = new Map(existing.map((r) => [r.key, r.value as Record<string, unknown>]))
+
+      if (dto.freeShipping) {
+        const prevCfg = existingMap.get(SETTING_KEYS.FREE_SHIPPING_CONFIG) ?? null
+        const prevThreshold =
+          typeof prevCfg?.thresholdPaise === 'number'
+            ? prevCfg.thresholdPaise
+            : typeof existingMap.get(SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE)?.amountPaise ===
+                'number'
+              ? (existingMap.get(SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE)!.amountPaise as number)
+              : 99900
+
+        const nextValue = {
+          enabled: dto.freeShipping.enabled,
+          thresholdPaise: dto.freeShipping.thresholdPaise ?? prevThreshold,
+          startsAt:
+            dto.freeShipping.startsAt !== undefined
+              ? dto.freeShipping.startsAt
+              : typeof prevCfg?.startsAt === 'string'
+                ? prevCfg.startsAt
+                : null,
+          endsAt:
+            dto.freeShipping.endsAt !== undefined
+              ? dto.freeShipping.endsAt
+              : typeof prevCfg?.endsAt === 'string'
+                ? prevCfg.endsAt
+                : null,
+        }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.FREE_SHIPPING_CONFIG },
+          update: { value: nextValue },
+          create: { key: SETTING_KEYS.FREE_SHIPPING_CONFIG, value: nextValue },
+        })
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE },
+          update: { value: { amountPaise: nextValue.thresholdPaise } },
+          create: {
+            key: SETTING_KEYS.FREE_SHIPPING_THRESHOLD_PAISE,
+            value: { amountPaise: nextValue.thresholdPaise },
+          },
+        })
+
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_FREE_SHIPPING_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.FREE_SHIPPING_CONFIG,
+            before: (prevCfg ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextValue as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (dto.storePickup) {
+        const prevPickup = existingMap.get(SETTING_KEYS.STORE_PICKUP_CONFIG) ?? null
+        const nextPickup = {
+          enabled: dto.storePickup.enabled,
+          payAtStoreEnabled:
+            dto.storePickup.payAtStoreEnabled ??
+            (typeof prevPickup?.payAtStoreEnabled === 'boolean'
+              ? prevPickup.payAtStoreEnabled
+              : false),
+          holdWindowDays:
+            dto.storePickup.holdWindowDays ??
+            (typeof prevPickup?.holdWindowDays === 'number' ? prevPickup.holdWindowDays : 3),
+        }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.STORE_PICKUP_CONFIG },
+          update: { value: nextPickup },
+          create: { key: SETTING_KEYS.STORE_PICKUP_CONFIG, value: nextPickup },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_STORE_PICKUP_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.STORE_PICKUP_CONFIG,
+            before: (prevPickup ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextPickup as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (dto.taxDisplay) {
+        const prevTaxDisplay = existingMap.get(SETTING_KEYS.TAX_DISPLAY_CONFIG) ?? null
+        const nextTaxDisplay = { showTaxBreakdown: dto.taxDisplay.showTaxBreakdown }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.TAX_DISPLAY_CONFIG },
+          update: { value: nextTaxDisplay },
+          create: { key: SETTING_KEYS.TAX_DISPLAY_CONFIG, value: nextTaxDisplay },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_TAX_DISPLAY_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.TAX_DISPLAY_CONFIG,
+            before: (prevTaxDisplay ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextTaxDisplay as Prisma.InputJsonValue,
+          },
+        })
+      }
+    })
+
+    await this.settingsService.invalidateCache()
+    return this.settingsService.getPublicSettings()
+  }
+
+  async setPickupLocationActive(ownerEmail: string, locationId: string, isActive: boolean) {
+    const owner = await this.resolveOwnerAdmin(ownerEmail)
+    const location = await this.prisma.pickupLocation.findUnique({ where: { id: locationId } })
+    if (!location) {
+      throw new NotFoundException('Pickup location not found')
+    }
+    if (this.settingsService.isProdRuntime() && location.is_sample && isActive) {
+      throw new BadRequestException('Sample pickup locations cannot be activated in production')
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pickupLocation.update({
+        where: { id: locationId },
+        data: { is_active: isActive },
+      })
+      await tx.auditLog.create({
+        data: {
+          admin_id: owner.id,
+          action: isActive ? 'ACTIVATE_PICKUP_LOCATION' : 'DEACTIVATE_PICKUP_LOCATION',
+          entity: 'pickup_location',
+          entity_id: locationId,
+          before: { is_active: location.is_active },
+          after: { is_active: isActive },
+        },
+      })
+    })
+
+    await this.settingsService.invalidateCache()
+  }
+}
