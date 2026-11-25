@@ -41,6 +41,10 @@ describe('Phase 6 Webhooks, Reconciliation, Concurrency & Admin Order Lifecycle 
   async function cleanOrdersAndEvents() {
     await prisma.checkoutIdempotencyKey.deleteMany()
     await prisma.webhookEvent.deleteMany()
+    await prisma.notificationLog.deleteMany()
+    await prisma.emailSuppression.deleteMany()
+    await prisma.otpChallenge.deleteMany()
+    await prisma.phoneVerificationToken.deleteMany()
     await prisma.refund.deleteMany()
     await prisma.auditLog.deleteMany()
     await prisma.orderEvent.deleteMany()

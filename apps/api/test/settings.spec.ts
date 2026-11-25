@@ -204,4 +204,84 @@ describe('SettingsService public hiding & sample pickup protection', () => {
       env.APP_ENV = prevAppEnv
     }
   })
+
+  it('gates COD and Pay-at-Store behind smsOtpReady in production and allows when MSG91 OTP DLT is configured', async () => {
+    const prisma = {
+      setting: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            key: SETTING_KEYS.STORE_PICKUP_CONFIG,
+            value: { enabled: true, payAtStoreEnabled: true, holdWindowDays: 3 },
+          },
+          {
+            key: SETTING_KEYS.COD_CONFIG,
+            value: {
+              enabled: true,
+              feePaise: 0,
+              maxOrderPaise: 500000,
+              maxActiveOrdersPerPhone: 2,
+            },
+          },
+        ]),
+      },
+      pickupLocation: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: LOC_REAL,
+            name: 'Flagship Store',
+            address: 'MG Road',
+            hours: '9-8',
+            prep_time_minutes: 60,
+            is_sample: false,
+          },
+        ]),
+      },
+    } as unknown as PrismaService
+
+    const redis = {
+      getJson: vi.fn().mockResolvedValue(null),
+      setJson: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService
+
+    const svc = new SettingsService(prisma, redis)
+    const prevAppEnv = env.APP_ENV
+    const prevSmsProvider = env.SMS_PROVIDER
+    const prevAuthKey = env.MSG91_AUTH_KEY
+    const prevSenderId = env.MSG91_SENDER_ID
+    const prevOtpTpl = env.MSG91_DLT_TEMPLATE_OTP
+
+    try {
+      // Dev mode with mock SMS allows COD & Pay-at-store when enabled in settings
+      env.APP_ENV = 'development'
+      env.SMS_PROVIDER = 'mock'
+      const devSettings = await svc.getPublicSettings()
+      expect(devSettings.smsOtpReady).toBe(true)
+      expect(devSettings.codEnabled).toBe(true)
+      expect(devSettings.payAtStoreEnabled).toBe(true)
+
+      // Production with incomplete MSG91 config forces smsOtpReady/COD/Pay-at-Store false
+      env.APP_ENV = 'production'
+      env.SMS_PROVIDER = 'mock'
+      const prodUnready = await svc.getPublicSettings()
+      expect(prodUnready.smsOtpReady).toBe(false)
+      expect(prodUnready.codEnabled).toBe(false)
+      expect(prodUnready.payAtStoreEnabled).toBe(false)
+
+      // Production with MSG91 + OTP template ready re-enables COD & Pay-at-Store
+      env.SMS_PROVIDER = 'msg91'
+      env.MSG91_AUTH_KEY = 'msg91-key'
+      env.MSG91_SENDER_ID = 'PRSOIL'
+      env.MSG91_DLT_TEMPLATE_OTP = 'dlt-otp-123'
+      const prodReady = await svc.getPublicSettings()
+      expect(prodReady.smsOtpReady).toBe(true)
+      expect(prodReady.codEnabled).toBe(true)
+      expect(prodReady.payAtStoreEnabled).toBe(true)
+    } finally {
+      env.APP_ENV = prevAppEnv
+      env.SMS_PROVIDER = prevSmsProvider
+      env.MSG91_AUTH_KEY = prevAuthKey
+      env.MSG91_SENDER_ID = prevSenderId
+      env.MSG91_DLT_TEMPLATE_OTP = prevOtpTpl
+    }
+  })
 })

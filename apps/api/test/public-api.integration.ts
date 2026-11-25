@@ -23,9 +23,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { AppModule } from '../src/app.module'
 import { configureApp } from '../src/app-setup'
 import { CartSessionService } from '../src/cart/cart-session.service'
+import { CheckoutSecurityService } from '../src/checkout/checkout-security.service'
 import { CheckoutService } from '../src/checkout/checkout.service'
 import { PaymentGatewayService } from '../src/checkout/payment-gateway.service'
 import { env, validateEnv } from '../src/env'
+import { SMS_TRANSPORT } from '../src/notifications/notification.types'
+import type { MockSmsTransport } from '../src/notifications/transports/mock-transports'
+import { TurnstileService } from '../src/otp/turnstile.service'
 import { PrismaService } from '../src/prisma/prisma.service'
 import { ProductCacheService } from '../src/products/products.cache'
 import { RedisService } from '../src/redis/redis.service'
@@ -431,11 +435,45 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
 
   it('Phase 5 Checkout: enforces server pricing, COD/pincode/cap rules, idempotency, row locks, pickup HMAC codes, late refunds, and prod guards', async () => {
     const cartSessionService = app.get(CartSessionService)
+    const checkoutSecurity = app.get(CheckoutSecurityService)
     const checkoutService = app.get(CheckoutService)
     const paymentGateway = app.get(PaymentGatewayService)
     const settingsService = app.get(SettingsService)
+    const mockSms = app.get<MockSmsTransport>(SMS_TRANSPORT)
     const lateSessionA = cartSessionService.resolveOrCreateSession(undefined).token
     const lateSessionB = cartSessionService.resolveOrCreateSession(undefined).token
+
+    async function acquireCodOtpToken(phone: string, turnstileToken?: string) {
+      mockSms.clear()
+      const sendRes = await request(app.getHttpServer())
+        .post('/api/otp/send')
+        .send({
+          phone,
+          purpose: 'COD_CHECKOUT',
+          ...(turnstileToken ? { turnstileToken } : {}),
+        })
+        .expect(200)
+      const sessionToken = sendRes.headers['x-cart-session'] as string
+      const lastSms = mockSms.outbox[mockSms.outbox.length - 1]
+      const otpMatch = lastSms?.textBody.match(/\b(\d{6})\b/)
+      if (!otpMatch) {
+        throw new Error(`Expected 6-digit OTP in mock SMS outbox, got: ${lastSms?.textBody}`)
+      }
+      const verifyRes = await request(app.getHttpServer())
+        .post('/api/otp/verify')
+        .set('x-cart-session', sessionToken)
+        .send({
+          challengeId: sendRes.body.challengeId,
+          phone,
+          code: otpMatch[1],
+          purpose: 'COD_CHECKOUT',
+        })
+        .expect(200)
+      return {
+        verificationToken: verifyRes.body.verificationToken as string,
+        sessionToken: verifyRes.headers['x-cart-session'] as string,
+      }
+    }
 
     if (process.env.REDIS_URL) {
       const flushClient = new Redis(process.env.REDIS_URL)
@@ -454,8 +492,12 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       where: { is_sample: true },
     })
 
-    // Ensure clean baseline orders, idempotency keys, stock, and coupon state
+    // Ensure clean baseline orders, idempotency keys, OTP state, stock, and coupon state
     await prisma.checkoutIdempotencyKey.deleteMany()
+    await prisma.notificationLog.deleteMany()
+    await prisma.emailSuppression.deleteMany()
+    await prisma.otpChallenge.deleteMany()
+    await prisma.phoneVerificationToken.deleteMany()
     await prisma.payment.deleteMany()
     await prisma.orderEvent.deleteMany()
     await prisma.reservation.deleteMany()
@@ -512,16 +554,39 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       })
       .expect(400)
 
-    // 3. Over codMaxOrderPaise (₹5,000 -> 6 x ₹900 = ₹5,400) rejects COD
+    // 2b. Missing or forged COD phoneVerificationToken rejected with 403
     await request(app.getHttpServer())
       .post('/api/checkout')
-      .set('Idempotency-Key', 'phase5-cod-max-cap-001')
+      .set('Idempotency-Key', 'phase5-cod-missing-otp-01')
       .send({
-        contact: { name: 'Asha', phone: '9876543210' },
+        contact: { name: 'Asha', phone: '9876509001' },
         fulfilmentMethod: 'DELIVERY',
         address: {
           name: 'Asha',
-          phone: '9876543210',
+          phone: '9876509001',
+          line1: '12 Gandhi Rd',
+          city: 'Chennai',
+          state: 'Tamil Nadu',
+          pincode: '600001',
+        },
+        items: [{ variantId: variant1L.id, qty: 1 }],
+        paymentMethod: 'COD',
+        dpdpConsent: true,
+      })
+      .expect(403)
+
+    // 3. Over codMaxOrderPaise (₹5,000 -> 6 x ₹900 = ₹5,400) rejects COD
+    const maxCapOtp = await acquireCodOtpToken('9876509002')
+    await request(app.getHttpServer())
+      .post('/api/checkout')
+      .set('x-cart-session', maxCapOtp.sessionToken)
+      .set('Idempotency-Key', 'phase5-cod-max-cap-001')
+      .send({
+        contact: { name: 'Asha', phone: '9876509002' },
+        fulfilmentMethod: 'DELIVERY',
+        address: {
+          name: 'Asha',
+          phone: '9876509002',
           line1: '12 Gandhi Rd',
           city: 'Chennai',
           state: 'Tamil Nadu',
@@ -529,14 +594,16 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
         },
         items: [{ variantId: variant5L.id, qty: 6 }],
         paymentMethod: 'COD',
+        phoneVerificationToken: maxCapOtp.verificationToken,
         dpdpConsent: true,
       })
       .expect(400)
 
     // 4. Valid COD checkout with SAMPLE10 coupon + Idempotency-Key replay/conflict + Cancellation restore
+    const cod1Otp = await acquireCodOtpToken('9876501111')
     const codBody = {
       contact: { name: 'Asha', phone: '9876501111', email: 'asha@example.com' },
-      fulfilmentMethod: 'DELIVERY',
+      fulfilmentMethod: 'DELIVERY' as const,
       address: {
         name: 'Asha',
         phone: '9876501111',
@@ -546,7 +613,8 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
         pincode: '600001',
       },
       items: [{ variantId: variant1L.id, qty: 2 }], // ₹400 - ₹40 (SAMPLE10) + ₹50 shipping = ₹410 (41000 paise)
-      paymentMethod: 'COD',
+      paymentMethod: 'COD' as const,
+      phoneVerificationToken: cod1Otp.verificationToken,
       couponCode: 'SAMPLE10',
       dpdpConsent: true,
       marketingConsent: false,
@@ -554,6 +622,7 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
 
     const codRes = await request(app.getHttpServer())
       .post('/api/checkout')
+      .set('x-cart-session', cod1Otp.sessionToken)
       .set('Idempotency-Key', 'phase5-cod-idemp-key-01')
       .send(codBody)
       .expect(201)
@@ -573,12 +642,14 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
     expect(dbCodOrder.dpdp_consent_at).toBeTruthy()
     expect(dbCodOrder.dpdp_policy_version).toBe('2026-11-draft-v1')
     expect(dbCodOrder.marketing_consent).toBe(false)
+    expect(dbCodOrder.phone_verified_at).toBeTruthy()
     const couponAfterCod = await prisma.coupon.findUniqueOrThrow({ where: { code: 'SAMPLE10' } })
     expect(couponAfterCod.used_count).toBe(1)
 
     // Identical Idempotency-Key + identical body replays exact order without duplicate stock deduction
     const replayRes = await request(app.getHttpServer())
       .post('/api/checkout')
+      .set('x-cart-session', cod1Otp.sessionToken)
       .set('Idempotency-Key', 'phase5-cod-idemp-key-01')
       .send(codBody)
       .expect(201)
@@ -588,20 +659,36 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
     // Same Idempotency-Key with DIFFERENT payload returns 409 Conflict
     await request(app.getHttpServer())
       .post('/api/checkout')
+      .set('x-cart-session', cod1Otp.sessionToken)
       .set('Idempotency-Key', 'phase5-cod-idemp-key-01')
       .send({ ...codBody, items: [{ variantId: variant1L.id, qty: 3 }] })
       .expect(409)
 
-    // Active COD cap (2 per phone): 2nd succeeds, 3rd rejects
+    // Active COD cap (2 per phone): 2nd succeeds with fresh OTP token, 3rd rejects
+    const cod2Otp = await acquireCodOtpToken('9876501111')
     const cod2 = await request(app.getHttpServer())
       .post('/api/checkout')
+      .set('x-cart-session', cod2Otp.sessionToken)
       .set('Idempotency-Key', 'phase5-cod-phone-limit-2')
-      .send({ ...codBody, couponCode: undefined })
+      .send({
+        ...codBody,
+        phoneVerificationToken: cod2Otp.verificationToken,
+        couponCode: undefined,
+      })
       .expect(201)
+    const cod3Otp = await acquireCodOtpToken(
+      '9876501111',
+      TurnstileService.NON_PROD_TEST_PASS_TOKEN,
+    )
     await request(app.getHttpServer())
       .post('/api/checkout')
+      .set('x-cart-session', cod3Otp.sessionToken)
       .set('Idempotency-Key', 'phase5-cod-phone-limit-3')
-      .send({ ...codBody, couponCode: undefined })
+      .send({
+        ...codBody,
+        phoneVerificationToken: cod3Otp.verificationToken,
+        couponCode: undefined,
+      })
       .expect(400)
 
     // Cancelling COD order restores stock + creates CANCEL movement + releases coupon slot
@@ -650,7 +737,7 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       })
       .expect(400)
 
-    // Valid signature via mock gateway helper transitions PENDING_PAYMENT -> PAID & returns 6-digit pickupCode ONCE
+    // Valid signature via mock gateway helper transitions PENDING_PAYMENT -> CONFIRMED (pickupCode deferred until READY_FOR_PICKUP)
     const validSigPayload = paymentGateway.createMockSignedPayment(
       pickupInit.payment!.gatewayOrderId,
       'pay_valid_pickup_01',
@@ -664,7 +751,7 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
     const verified1 = checkoutVerifyResponseSchema.parse(verifyRes1.body)
     expect(verified1.order.orderStatus).toBe('CONFIRMED')
     expect(verified1.alreadyProcessed).toBe(false)
-    expect(verified1.order.pickupCode).toMatch(/^\d{6}$/)
+    expect(verified1.order.pickupCode).toBeNull()
     const pickupEvents = await prisma.orderEvent.findMany({
       where: { order_id: pickupInit.order.id },
       orderBy: { created_at: 'asc' },
@@ -686,8 +773,13 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
       48,
     )
 
-    // Plaintext pickup code is HMAC-verified & locks after 5 bad guesses
-    const goodCode = verified1.order.pickupCode!
+    // Plaintext pickup code issued at READY_FOR_PICKUP is HMAC-verified & locks after 5 bad guesses
+    const readyPair = checkoutSecurity.createPickupCodePair(pickupInit.order.id)
+    await prisma.order.update({
+      where: { id: pickupInit.order.id },
+      data: { pickup_code_hash: readyPair.hmacHash },
+    })
+    const goodCode = readyPair.plaintextCode
     const okCheck = await checkoutService.verifyPickupCodeAttempt(pickupInit.order.id, goodCode)
     expect(okCheck.valid).toBe(true)
     for (let i = 0; i < 4; i += 1) {
@@ -888,6 +980,10 @@ describe('Public API E2E (PostgreSQL + Redis)', () => {
     // Restore clean dev stock & coupon count for subsequent dev inspection
     await prisma.checkoutIdempotencyKey.deleteMany()
     await prisma.webhookEvent.deleteMany()
+    await prisma.notificationLog.deleteMany()
+    await prisma.emailSuppression.deleteMany()
+    await prisma.otpChallenge.deleteMany()
+    await prisma.phoneVerificationToken.deleteMany()
     await prisma.refund.deleteMany()
     await prisma.payment.deleteMany()
     await prisma.orderEvent.deleteMany()

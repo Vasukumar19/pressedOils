@@ -144,7 +144,7 @@ describe('validateEnv', () => {
       }),
     ).toThrow()
 
-    const validProd = validateEnv({
+    const FULL_PROD_BASE_ENV = {
       NODE_ENV: 'production',
       APP_ENV: 'production',
       DATABASE_URL: 'postgresql://u:p@db.internal:5432/app',
@@ -152,11 +152,85 @@ describe('validateEnv', () => {
       QUEUE_REDIS_URL: 'redis://redis-queue.internal:6380',
       CART_SESSION_SECRET: 'prod-cart-session-secret-1234',
       PICKUP_CODE_HMAC_SECRET: 'prod-pickup-hmac-secret-123456',
+      OTP_HMAC_SECRET: 'prod-otp-hmac-secret-1234567890',
       PAYMENT_GATEWAY: 'razorpay',
       RAZORPAY_KEY_ID: 'rzp_live_123',
       RAZORPAY_KEY_SECRET: 'rzp_secret_123',
       RAZORPAY_WEBHOOK_SECRET: 'whsec_live_123',
-    })
+      SMS_PROVIDER: 'msg91',
+      EMAIL_PROVIDER: 'resend',
+      MSG91_AUTH_KEY: 'msg91-live-auth-key',
+      MSG91_SENDER_ID: 'PRSOIL',
+      MSG91_DLT_TEMPLATE_OTP: 'dlt-otp-1',
+      MSG91_DLT_TEMPLATE_ORDER_CONFIRMED: 'dlt-conf-2',
+      MSG91_DLT_TEMPLATE_ORDER_SHIPPED: 'dlt-ship-3',
+      MSG91_DLT_TEMPLATE_ORDER_DELIVERED: 'dlt-deliv-4',
+      MSG91_DLT_TEMPLATE_ORDER_READY_FOR_PICKUP: 'dlt-ready-5',
+      MSG91_DLT_TEMPLATE_PICKUP_CODE: 'dlt-pick-6',
+      MSG91_DLT_TEMPLATE_OWNER_ALERT: 'dlt-alert-7',
+      MSG91_DLT_TEMPLATE_ORDER_UPDATE: 'dlt-upd-8',
+      RESEND_API_KEY: 're_live_123',
+      EMAIL_FROM: 'Orders <orders@example.com>',
+      RESEND_WEBHOOK_SECRET: 'whsec_resend_live_12345',
+      OWNER_ALERT_EMAIL: 'owner@example.com, ops@example.com',
+      OWNER_ALERT_PHONE: '+919876543210, 9876543211',
+    }
+
+    // Production fails boot if mock SMS/email notifications or ALLOW_MOCK_NOTIFICATIONS=true
+    expect(() =>
+      validateEnv({
+        ...FULL_PROD_BASE_ENV,
+        SMS_PROVIDER: 'mock',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      validateEnv({
+        ...FULL_PROD_BASE_ENV,
+        EMAIL_PROVIDER: 'mock',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      validateEnv({
+        ...FULL_PROD_BASE_ENV,
+        ALLOW_MOCK_NOTIFICATIONS: 'true',
+      }),
+    ).toThrow()
+
+    // Missing OTP_HMAC_SECRET, EMAIL_FROM, RESEND_WEBHOOK_SECRET, or DLT template fails prod boot
+    const withoutOtpSecret = { ...FULL_PROD_BASE_ENV }
+    delete (withoutOtpSecret as Record<string, string>).OTP_HMAC_SECRET
+    expect(() => validateEnv(withoutOtpSecret)).toThrow()
+
+    const withoutResendWebhook = { ...FULL_PROD_BASE_ENV }
+    delete (withoutResendWebhook as Record<string, string>).RESEND_WEBHOOK_SECRET
+    expect(() => validateEnv(withoutResendWebhook)).toThrow()
+
+    const withoutPickupDlt = { ...FULL_PROD_BASE_ENV }
+    delete (withoutPickupDlt as Record<string, string>).MSG91_DLT_TEMPLATE_PICKUP_CODE
+    expect(() => validateEnv(withoutPickupDlt)).toThrow()
+
+    // Invalid EMAIL_FROM or invalid OWNER_ALERT_PHONE fails validation
+    expect(() =>
+      validateEnv({
+        ...FULL_PROD_BASE_ENV,
+        EMAIL_FROM: 'not-an-email',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      validateEnv({
+        ...FULL_PROD_BASE_ENV,
+        OWNER_ALERT_PHONE: '+15551234567',
+      }),
+    ).toThrow()
+
+    const validProd = validateEnv(FULL_PROD_BASE_ENV)
     expect(validProd.PAYMENT_GATEWAY).toBe('razorpay')
+    expect(validProd.SMS_PROVIDER).toBe('msg91')
+    expect(validProd.EMAIL_PROVIDER).toBe('resend')
+    expect(validProd.OWNER_ALERT_EMAIL).toEqual(['owner@example.com', 'ops@example.com'])
+    expect(validProd.OWNER_ALERT_PHONE).toEqual(['+919876543210', '+919876543211'])
   })
 })

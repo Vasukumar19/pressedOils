@@ -19,6 +19,10 @@ function runTsx(scriptPath: string, extraEnv: Record<string, string> = {}) {
 async function cleanDatabase() {
   await prisma.checkoutIdempotencyKey.deleteMany()
   await prisma.webhookEvent.deleteMany()
+  await prisma.notificationLog.deleteMany()
+  await prisma.emailSuppression.deleteMany()
+  await prisma.otpChallenge.deleteMany()
+  await prisma.phoneVerificationToken.deleteMany()
   await prisma.refund.deleteMany()
   await prisma.auditLog.deleteMany()
   await prisma.orderEvent.deleteMany()
@@ -251,6 +255,52 @@ describe('PostgreSQL schema, constraints, and seeds (integration)', () => {
       }),
     ).rejects.toThrow()
     await prisma.webhookEvent.delete({ where: { event_id: 'evt_constraint_unique_01' } })
+
+    // notifications.idempotency_key uniqueness guarantees idempotent SMS/Email delivery at DB level
+    await prisma.notificationLog.create({
+      data: {
+        idempotency_key: 'notify:SMS:constraint-test:01',
+        channel: 'SMS',
+        event: 'ORDER_CONFIRMED',
+        template_id: 'order-confirmed-v1',
+        template_version: 'v1',
+        provider: 'mock',
+        masked_recipient: '+91******3299',
+        status: 'SENT',
+      },
+    })
+    await expect(
+      prisma.notificationLog.create({
+        data: {
+          idempotency_key: 'notify:SMS:constraint-test:01',
+          channel: 'SMS',
+          event: 'ORDER_CONFIRMED',
+          template_id: 'order-confirmed-v1',
+          template_version: 'v1',
+          provider: 'mock',
+          masked_recipient: '+91******3299',
+          status: 'SENT',
+        },
+      }),
+    ).rejects.toThrow()
+    await prisma.notificationLog.delete({
+      where: { idempotency_key: 'notify:SMS:constraint-test:01' },
+    })
+
+    // otp_challenges.attempts >= 0 check constraint
+    await expect(
+      prisma.otpChallenge.create({
+        data: {
+          purpose: 'COD_CHECKOUT',
+          phone_hash: 'hash_phone_neg',
+          session_id: 'sess-neg',
+          code_hmac: 'hmac_neg',
+          attempts: -1,
+          max_attempts: 5,
+          expires_at: new Date(Date.now() + 300_000),
+        },
+      }),
+    ).rejects.toThrow()
 
     await prisma.customer.delete({ where: { id: customer.id } })
   })
