@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core'
 import { ThrottlerModule } from '@nestjs/throttler'
 import { LoggerModule } from 'nestjs-pino'
 import { CartModule } from './cart/cart.module'
+import { CheckoutModule } from './checkout/checkout.module'
 import { ThrottlerIpGuard } from './common/throttler-ip.guard'
 import { env } from './env'
 import { HealthModule } from './health/health.module'
@@ -32,6 +33,9 @@ import { SettingsModule } from './settings/settings.module'
             '*.phone',
             '*.email',
             '*.totp_secret',
+            '*.pickupCode',
+            '*.pickup_code_hash',
+            '*.razorpaySignature',
           ],
           censor: '[REDACTED]',
         },
@@ -51,6 +55,7 @@ import { SettingsModule } from './settings/settings.module'
     PincodeModule,
     SettingsModule,
     CartModule,
+    CheckoutModule,
   ],
   providers: [
     {

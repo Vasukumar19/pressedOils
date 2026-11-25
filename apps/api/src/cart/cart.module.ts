@@ -10,5 +10,6 @@ import { CartService } from './cart.service'
   imports: [PincodeModule, SettingsModule],
   controllers: [CartController],
   providers: [CartService, CartSessionService, CartRateLimitService],
+  exports: [CartSessionService, CartRateLimitService],
 })
 export class CartModule {}

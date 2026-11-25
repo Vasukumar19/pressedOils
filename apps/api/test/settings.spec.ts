@@ -114,6 +114,12 @@ describe('SettingsService public hiding & sample pickup protection', () => {
         storePickupEnabled: true,
         payAtStoreEnabled: false,
         holdWindowDays: 3,
+        codEnabled: false,
+        codFeePaise: 0,
+        codMaxOrderPaise: 500000,
+        maxActiveCodOrdersPerPhone: 2,
+        legalPagesApproved: false,
+        dpdpPolicyVersion: '2026-11-draft-v1',
         fssaiNumber: '123',
         supportEmail: 'a@b.com',
         supportPhone: '+919999999999',
@@ -146,8 +152,55 @@ describe('SettingsService public hiding & sample pickup protection', () => {
       const cachedRes = await prodCachedSvc.getPublicSettings()
       expect(cachedRes.pickupLocations).toHaveLength(1)
       expect(cachedRes.pickupLocations[0]!.id).toBe(LOC_REAL)
+      expect(cachedRes.checkoutEnabled).toBe(false)
+      expect(cachedRes.legalPagesApproved).toBe(false)
+      expect(cachedRes.codEnabled).toBe(false)
+      expect(cachedRes.codMaxOrderPaise).toBeNull()
     } finally {
       env.APP_ENV = prevEnv
+    }
+  })
+
+  it('disables checkout in production while legalPagesApproved is false and enables once approved', async () => {
+    const prisma = {
+      setting: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              key: SETTING_KEYS.LEGAL_PAGES_CONFIG,
+              value: { approved: false, privacyVersion: '2026-11-draft-v1' },
+            },
+          ])
+          .mockResolvedValueOnce([
+            {
+              key: SETTING_KEYS.LEGAL_PAGES_CONFIG,
+              value: { approved: true, privacyVersion: '2026-11-v1' },
+            },
+          ]),
+      },
+      pickupLocation: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService
+
+    const redis = {
+      getJson: vi.fn().mockResolvedValue(null),
+      setJson: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService
+
+    const svc = new SettingsService(prisma, redis)
+    const prevAppEnv = env.APP_ENV
+    env.APP_ENV = 'production'
+    try {
+      const blocked = await svc.getPublicSettings()
+      expect(blocked.legalPagesApproved).toBe(false)
+      expect(blocked.checkoutEnabled).toBe(false)
+
+      const approved = await svc.getPublicSettings()
+      expect(approved.legalPagesApproved).toBe(true)
+      expect(approved.checkoutEnabled).toBe(true)
+      expect(approved.dpdpPolicyVersion).toBe('2026-11-v1')
+    } finally {
+      env.APP_ENV = prevAppEnv
     }
   })
 })

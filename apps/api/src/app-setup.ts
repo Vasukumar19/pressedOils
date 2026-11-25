@@ -15,6 +15,7 @@ export function buildOpenApiConfig() {
     .addTag('health', 'Liveness and readiness probes')
     .addTag('products', 'Catalog, product detail, and live availability')
     .addTag('cart', 'Server cart validation, pricing, coupons, and fulfilment checks')
+    .addTag('checkout', 'Checkout, inventory reservations, COD, and Razorpay verification')
     .addTag('pincode', 'Delivery serviceability, TAT, COD, and shipping fees')
     .addTag('settings', 'Public store configuration and thresholds')
     .addTag('admin-settings', 'Protected owner settings controls (pre-Phase 9)')
@@ -50,7 +51,13 @@ export function configureApp(app: INestApplication, currentEnv: Env): void {
     },
     credentials: false,
     methods: ['GET', 'HEAD', 'POST', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-Cart-Session', 'X-Admin-Secret', 'X-Admin-Email'],
+    allowedHeaders: [
+      'Content-Type',
+      'Idempotency-Key',
+      'X-Cart-Session',
+      'X-Admin-Secret',
+      'X-Admin-Email',
+    ],
     exposedHeaders: ['X-Request-Id', 'X-Cart-Session'],
   })
 

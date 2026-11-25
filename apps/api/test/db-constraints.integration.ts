@@ -17,6 +17,7 @@ function runTsx(scriptPath: string, extraEnv: Record<string, string> = {}) {
 }
 
 async function cleanDatabase() {
+  await prisma.checkoutIdempotencyKey.deleteMany()
   await prisma.auditLog.deleteMany()
   await prisma.orderEvent.deleteMany()
   await prisma.reservation.deleteMany()
@@ -165,7 +166,7 @@ describe('PostgreSQL schema, constraints, and seeds (integration)', () => {
     await prisma.customer.delete({ where: { id: customer.id } })
   })
 
-  it('enforces reserved <= stock CHECK constraint at database level', async () => {
+  it('enforces reserved <= stock CHECK constraint and non-negative order/payment constraints at database level', async () => {
     const variant = await prisma.variant.findFirstOrThrow()
 
     await expect(
@@ -174,6 +175,27 @@ describe('PostgreSQL schema, constraints, and seeds (integration)', () => {
         data: { reserved: variant.stock + 1 },
       }),
     ).rejects.toThrow()
+
+    const customer = await prisma.customer.create({
+      data: { name: 'Constraint Check', phone: '+919876543299' },
+    })
+
+    await expect(
+      prisma.order.create({
+        data: {
+          order_number: 'ORD-CHK-NEG',
+          customer_id: customer.id,
+          address_snapshot: {},
+          subtotal_paise: 1000,
+          shipping_paise: 0,
+          cod_fee_paise: -1,
+          total_paise: 1000,
+          payment_method: 'COD',
+        },
+      }),
+    ).rejects.toThrow()
+
+    await prisma.customer.delete({ where: { id: customer.id } })
   })
 
   it('check:no-placeholders fails when active seeded placeholder products exist, and passes when clean', async () => {

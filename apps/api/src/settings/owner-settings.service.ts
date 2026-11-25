@@ -42,6 +42,8 @@ export class OwnerSettingsService {
     }
     if (dto.storePickup) keysToRead.push(SETTING_KEYS.STORE_PICKUP_CONFIG)
     if (dto.taxDisplay) keysToRead.push(SETTING_KEYS.TAX_DISPLAY_CONFIG)
+    if (dto.cod) keysToRead.push(SETTING_KEYS.COD_CONFIG)
+    if (dto.legalPages) keysToRead.push(SETTING_KEYS.LEGAL_PAGES_CONFIG)
 
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.setting.findMany({
@@ -150,6 +152,77 @@ export class OwnerSettingsService {
             entity_id: SETTING_KEYS.TAX_DISPLAY_CONFIG,
             before: (prevTaxDisplay ?? undefined) as Prisma.InputJsonValue | undefined,
             after: nextTaxDisplay as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (dto.cod) {
+        const prevCod = existingMap.get(SETTING_KEYS.COD_CONFIG) ?? null
+        const nextCod = {
+          enabled: dto.cod.enabled,
+          feePaise:
+            dto.cod.feePaise ?? (typeof prevCod?.feePaise === 'number' ? prevCod.feePaise : 0),
+          maxOrderPaise:
+            dto.cod.maxOrderPaise ??
+            (typeof prevCod?.maxOrderPaise === 'number' ? prevCod.maxOrderPaise : 500000),
+          maxActiveOrdersPerPhone:
+            dto.cod.maxActiveOrdersPerPhone ??
+            (typeof prevCod?.maxActiveOrdersPerPhone === 'number'
+              ? prevCod.maxActiveOrdersPerPhone
+              : 2),
+        }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.COD_CONFIG },
+          update: { value: nextCod },
+          create: { key: SETTING_KEYS.COD_CONFIG, value: nextCod },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_COD_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.COD_CONFIG,
+            before: (prevCod ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextCod as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (dto.legalPages) {
+        const prevLegal = existingMap.get(SETTING_KEYS.LEGAL_PAGES_CONFIG) ?? null
+        const nextLegal = {
+          approved: dto.legalPages.approved,
+          privacyVersion:
+            dto.legalPages.privacyVersion ??
+            (typeof prevLegal?.privacyVersion === 'string'
+              ? prevLegal.privacyVersion
+              : '2026-11-draft-v1'),
+          termsVersion:
+            dto.legalPages.termsVersion ??
+            (typeof prevLegal?.termsVersion === 'string'
+              ? prevLegal.termsVersion
+              : '2026-11-draft-v1'),
+          shippingPolicyVersion:
+            dto.legalPages.shippingPolicyVersion ??
+            (typeof prevLegal?.shippingPolicyVersion === 'string'
+              ? prevLegal.shippingPolicyVersion
+              : '2026-11-draft-v1'),
+        }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.LEGAL_PAGES_CONFIG },
+          update: { value: nextLegal },
+          create: { key: SETTING_KEYS.LEGAL_PAGES_CONFIG, value: nextLegal },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_LEGAL_PAGES_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.LEGAL_PAGES_CONFIG,
+            before: (prevLegal ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextLegal as Prisma.InputJsonValue,
           },
         })
       }

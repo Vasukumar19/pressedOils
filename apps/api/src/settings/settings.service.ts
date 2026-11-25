@@ -13,7 +13,7 @@ import { env } from '../env'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 
-const SETTINGS_CACHE_KEY = 'settings:public:v2'
+const SETTINGS_CACHE_KEY = 'settings:public:v3'
 const SETTINGS_CACHE_TTL_SECONDS = 5
 
 const PUBLIC_SETTING_KEY_LIST = [
@@ -23,6 +23,8 @@ const PUBLIC_SETTING_KEY_LIST = [
   SETTING_KEYS.GST_CONFIG,
   SETTING_KEYS.TAX_DISPLAY_CONFIG,
   SETTING_KEYS.STORE_PICKUP_CONFIG,
+  SETTING_KEYS.COD_CONFIG,
+  SETTING_KEYS.LEGAL_PAGES_CONFIG,
   SETTING_KEYS.STORE_INFO,
   SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION,
 ]
@@ -41,6 +43,12 @@ export interface InternalPricingSettings {
   storePickupEnabled: boolean
   payAtStoreEnabled: boolean
   holdWindowDays: number
+  codEnabled: boolean
+  codFeePaise: number
+  codMaxOrderPaise: number
+  maxActiveCodOrdersPerPhone: number
+  legalPagesApproved: boolean
+  dpdpPolicyVersion: string
   fssaiNumber: string
   supportEmail: string
   supportPhone: string
@@ -105,6 +113,8 @@ export class SettingsService {
         const gst = byKey.get(SETTING_KEYS.GST_CONFIG)
         const taxDisplay = byKey.get(SETTING_KEYS.TAX_DISPLAY_CONFIG)
         const storePickup = byKey.get(SETTING_KEYS.STORE_PICKUP_CONFIG)
+        const codCfg = byKey.get(SETTING_KEYS.COD_CONFIG)
+        const legalCfg = byKey.get(SETTING_KEYS.LEGAL_PAGES_CONFIG)
         const store = byKey.get(SETTING_KEYS.STORE_INFO)
         const labReq = byKey.get(SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION)
 
@@ -149,6 +159,19 @@ export class SettingsService {
               : false,
           holdWindowDays:
             typeof storePickup?.holdWindowDays === 'number' ? storePickup.holdWindowDays : 3,
+          codEnabled: typeof codCfg?.enabled === 'boolean' ? codCfg.enabled : false,
+          codFeePaise: typeof codCfg?.feePaise === 'number' ? codCfg.feePaise : 0,
+          codMaxOrderPaise:
+            typeof codCfg?.maxOrderPaise === 'number' ? codCfg.maxOrderPaise : 500000,
+          maxActiveCodOrdersPerPhone:
+            typeof codCfg?.maxActiveOrdersPerPhone === 'number'
+              ? codCfg.maxActiveOrdersPerPhone
+              : 2,
+          legalPagesApproved: typeof legalCfg?.approved === 'boolean' ? legalCfg.approved : false,
+          dpdpPolicyVersion:
+            typeof legalCfg?.privacyVersion === 'string'
+              ? legalCfg.privacyVersion
+              : env.LEGAL_PRIVACY_VERSION,
           fssaiNumber: typeof store?.fssaiNumber === 'string' ? store.fssaiNumber : 'TODO(owner)',
           supportEmail:
             typeof store?.supportEmail === 'string' ? store.supportEmail : 'TODO(owner)',
@@ -178,6 +201,7 @@ export class SettingsService {
   }
 
   async getPublicSettings(): Promise<PublicSettingsResponseDto> {
+    const isProd = this.isProdRuntime()
     const internal = await this.getInternalPricingSettings()
     const freeShippingActive = isFreeShippingWindowActive({
       enabled: internal.freeShippingEnabledSetting,
@@ -188,6 +212,7 @@ export class SettingsService {
 
     const eligibleLocations = internal.storePickupEnabled ? internal.pickupLocations : []
     const storePickupAvailable = internal.storePickupEnabled && eligibleLocations.length > 0
+    const checkoutEnabled = isProd ? internal.legalPagesApproved : true
 
     return {
       brandName: internal.brandName,
@@ -199,7 +224,15 @@ export class SettingsService {
       gstIncludedInPrice: internal.gstIncludedInPrice,
       showTaxBreakdown: internal.showTaxBreakdown,
       storePickupEnabled: storePickupAvailable,
+      payAtStoreEnabled: storePickupAvailable && internal.payAtStoreEnabled,
       pickupLocations: storePickupAvailable ? eligibleLocations : [],
+      codEnabled: internal.codEnabled,
+      codFeePaise: internal.codFeePaise,
+      codMaxOrderPaise: internal.codEnabled ? internal.codMaxOrderPaise : null,
+      legalPagesApproved: internal.legalPagesApproved,
+      dpdpPolicyVersion: internal.dpdpPolicyVersion,
+      checkoutEnabled,
+      paymentGateway: isProd ? 'razorpay' : env.PAYMENT_GATEWAY,
       fssaiNumber: internal.fssaiNumber,
       supportEmail: internal.supportEmail,
       supportPhone: internal.supportPhone,

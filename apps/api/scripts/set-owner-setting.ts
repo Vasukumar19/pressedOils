@@ -30,16 +30,22 @@ async function main() {
   const freeShippingEnabled = parseBoolFlag(readFlag(args, '--free-shipping'))
   const thresholdRaw = readFlag(args, '--threshold')
   const storePickupEnabled = parseBoolFlag(readFlag(args, '--store-pickup'))
+  const payAtStoreEnabled = parseBoolFlag(readFlag(args, '--pay-at-store'))
   const showTaxBreakdown = parseBoolFlag(readFlag(args, '--show-tax'))
+  const codEnabled = parseBoolFlag(readFlag(args, '--cod'))
+  const legalApproved = parseBoolFlag(readFlag(args, '--legal-approved'))
 
   if (
     freeShippingEnabled === undefined &&
     thresholdRaw === undefined &&
     storePickupEnabled === undefined &&
-    showTaxBreakdown === undefined
+    payAtStoreEnabled === undefined &&
+    showTaxBreakdown === undefined &&
+    codEnabled === undefined &&
+    legalApproved === undefined
   ) {
     throw new Error(
-      'Provide at least one setting: --free-shipping, --threshold, --store-pickup, or --show-tax',
+      'Provide at least one setting: --free-shipping, --threshold, --store-pickup, --pay-at-store, --show-tax, --cod, or --legal-approved',
     )
   }
 
@@ -92,15 +98,17 @@ async function main() {
         })
       }
 
-      if (storePickupEnabled !== undefined) {
+      if (storePickupEnabled !== undefined || payAtStoreEnabled !== undefined) {
         const prev = await tx.setting.findUnique({
           where: { key: SETTING_KEYS.STORE_PICKUP_CONFIG },
         })
         const prevVal = (prev?.value as Record<string, unknown> | undefined) ?? {}
         const nextVal = {
-          enabled: storePickupEnabled,
+          enabled:
+            storePickupEnabled ?? (typeof prevVal.enabled === 'boolean' ? prevVal.enabled : false),
           payAtStoreEnabled:
-            typeof prevVal.payAtStoreEnabled === 'boolean' ? prevVal.payAtStoreEnabled : false,
+            payAtStoreEnabled ??
+            (typeof prevVal.payAtStoreEnabled === 'boolean' ? prevVal.payAtStoreEnabled : false),
           holdWindowDays: typeof prevVal.holdWindowDays === 'number' ? prevVal.holdWindowDays : 3,
         }
         await tx.setting.upsert({
@@ -114,6 +122,70 @@ async function main() {
             action: 'CLI_UPDATE_STORE_PICKUP_SETTING',
             entity: 'setting',
             entity_id: SETTING_KEYS.STORE_PICKUP_CONFIG,
+            before: (prev?.value ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextVal as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (codEnabled !== undefined) {
+        const prev = await tx.setting.findUnique({ where: { key: SETTING_KEYS.COD_CONFIG } })
+        const prevVal = (prev?.value as Record<string, unknown> | undefined) ?? {}
+        const nextVal = {
+          enabled: codEnabled,
+          feePaise: typeof prevVal.feePaise === 'number' ? prevVal.feePaise : 0,
+          maxOrderPaise: typeof prevVal.maxOrderPaise === 'number' ? prevVal.maxOrderPaise : 500000,
+          maxActiveOrdersPerPhone:
+            typeof prevVal.maxActiveOrdersPerPhone === 'number'
+              ? prevVal.maxActiveOrdersPerPhone
+              : 2,
+        }
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.COD_CONFIG },
+          update: { value: nextVal },
+          create: { key: SETTING_KEYS.COD_CONFIG, value: nextVal },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'CLI_UPDATE_COD_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.COD_CONFIG,
+            before: (prev?.value ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextVal as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (legalApproved !== undefined) {
+        const prev = await tx.setting.findUnique({
+          where: { key: SETTING_KEYS.LEGAL_PAGES_CONFIG },
+        })
+        const prevVal = (prev?.value as Record<string, unknown> | undefined) ?? {}
+        const nextVal = {
+          approved: legalApproved,
+          privacyVersion:
+            typeof prevVal.privacyVersion === 'string'
+              ? prevVal.privacyVersion
+              : '2026-11-draft-v1',
+          termsVersion:
+            typeof prevVal.termsVersion === 'string' ? prevVal.termsVersion : '2026-11-draft-v1',
+          shippingPolicyVersion:
+            typeof prevVal.shippingPolicyVersion === 'string'
+              ? prevVal.shippingPolicyVersion
+              : '2026-11-draft-v1',
+        }
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.LEGAL_PAGES_CONFIG },
+          update: { value: nextVal },
+          create: { key: SETTING_KEYS.LEGAL_PAGES_CONFIG, value: nextVal },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'CLI_UPDATE_LEGAL_PAGES_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.LEGAL_PAGES_CONFIG,
             before: (prev?.value ?? undefined) as Prisma.InputJsonValue | undefined,
             after: nextVal as Prisma.InputJsonValue,
           },

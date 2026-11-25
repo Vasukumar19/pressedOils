@@ -66,8 +66,57 @@ const envSchema = z
       ),
     CART_SESSION_SECRET: z.string().trim().min(16).optional(),
     OWNER_SETTINGS_SECRET: z.string().trim().min(16).optional(),
+    PICKUP_CODE_HMAC_SECRET: z.string().trim().min(16).optional(),
+    PAYMENT_GATEWAY: z.enum(['razorpay', 'mock']).optional(),
+    ALLOW_MOCK_GATEWAY: z.enum(['true', 'false']).default('false'),
+    RAZORPAY_KEY_ID: z.string().trim().min(1).optional(),
+    RAZORPAY_KEY_SECRET: z.string().trim().min(1).optional(),
+    RAZORPAY_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+    LEGAL_PRIVACY_VERSION: z.string().trim().min(1).default('2026-11-draft-v1'),
   })
+  .transform((data) => ({
+    ...data,
+    PAYMENT_GATEWAY: data.PAYMENT_GATEWAY ?? (data.APP_ENV === 'production' ? 'razorpay' : 'mock'),
+  }))
   .superRefine((data, ctx) => {
+    const isProdTarget = data.APP_ENV === 'production' || data.IS_PRODUCTION_DB === 'true'
+
+    if (isProdTarget && (data.PAYMENT_GATEWAY === 'mock' || data.ALLOW_MOCK_GATEWAY === 'true')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PAYMENT_GATEWAY'],
+        message:
+          'Mock payment gateway cannot be enabled when APP_ENV=production or IS_PRODUCTION_DB=true',
+      })
+    }
+
+    if (data.APP_ENV === 'production') {
+      if (!data.PICKUP_CODE_HMAC_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PICKUP_CODE_HMAC_SECRET'],
+          message: 'PICKUP_CODE_HMAC_SECRET is required in production',
+        })
+      }
+    }
+
+    if (data.PAYMENT_GATEWAY === 'razorpay' && (isProdTarget || data.NODE_ENV !== 'test')) {
+      if (!data.RAZORPAY_KEY_ID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RAZORPAY_KEY_ID'],
+          message: 'RAZORPAY_KEY_ID is required when PAYMENT_GATEWAY=razorpay',
+        })
+      }
+      if (!data.RAZORPAY_KEY_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RAZORPAY_KEY_SECRET'],
+          message: 'RAZORPAY_KEY_SECRET is required when PAYMENT_GATEWAY=razorpay',
+        })
+      }
+    }
+
     if (data.APP_ENV === 'production' || data.APP_ENV === 'staging') {
       if (!data.CART_SESSION_SECRET) {
         ctx.addIssue({
