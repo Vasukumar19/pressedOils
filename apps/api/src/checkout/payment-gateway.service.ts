@@ -4,6 +4,7 @@ import { isProductionRuntime } from '@pressedoils/shared'
 import { env } from '../env'
 
 const MOCK_DEV_SECRET = 'mock_razorpay_dev_only_secret_do_not_use_in_prod'
+const MOCK_WEBHOOK_DEV_SECRET = 'mock_razorpay_webhook_dev_only_secret_do_not_use_in_prod'
 const MOCK_DEV_KEY_ID = 'rzp_test_mock_local'
 const GATEWAY_TIMEOUT_MS = 8000
 
@@ -14,8 +15,10 @@ export interface CreateGatewayOrderResult {
 }
 
 export interface GatewayOrderPaymentStatus {
+  status: 'captured' | 'authorized' | 'failed' | 'none'
   capturedPaymentId: string | null
   capturedAmountPaise: number | null
+  authorizedPaymentId: string | null
   raw?: unknown
 }
 
@@ -35,6 +38,10 @@ export function computeRazorpayHmac(
     .digest('hex')
 }
 
+export function computeWebhookHmac(rawBody: Buffer | string, secret: string): string {
+  return createHmac('sha256', secret).update(rawBody).digest('hex')
+}
+
 export function timingSafeHexEquals(expectedHex: string, actualHex: string): boolean {
   if (!/^[a-f0-9]+$/i.test(actualHex) || expectedHex.length !== actualHex.length) {
     return false
@@ -50,7 +57,12 @@ export class PaymentGatewayService {
   // Test/dev-only in-memory ledger for mock gateway inspection & late-payment simulation
   private readonly mockOrders = new Map<
     string,
-    { amountPaise: number; capturedPaymentId: string | null; refunded: boolean }
+    {
+      amountPaise: number
+      capturedPaymentId: string | null
+      authorizedPaymentId: string | null
+      refunded: boolean
+    }
   >()
 
   constructor() {
@@ -98,6 +110,7 @@ export class PaymentGatewayService {
       this.mockOrders.set(gatewayOrderId, {
         amountPaise: input.amountPaise,
         capturedPaymentId: null,
+        authorizedPaymentId: null,
         refunded: false,
       })
       return {
@@ -199,6 +212,43 @@ export class PaymentGatewayService {
     }
   }
 
+  private getWebhookSecret(): string | null {
+    if (this.isProdRuntime()) {
+      return env.RAZORPAY_WEBHOOK_SECRET ?? null
+    }
+    if (this.getMode() === 'mock') {
+      return env.RAZORPAY_WEBHOOK_SECRET ?? MOCK_WEBHOOK_DEV_SECRET
+    }
+    return env.RAZORPAY_WEBHOOK_SECRET ?? null
+  }
+
+  /**
+   * Verifies Razorpay `X-Razorpay-Signature` HMAC-SHA256 over the EXACT raw request bytes
+   * using constant-time comparison before JSON parsing.
+   */
+  verifyWebhookSignature(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    if (rawBody.length === 0 || !signatureHeader || !signatureHeader.trim()) {
+      return false
+    }
+    const secret = this.getWebhookSecret()
+    if (!secret) {
+      return false
+    }
+    const expected = computeWebhookHmac(rawBody, secret)
+    return timingSafeHexEquals(expected, signatureHeader.trim())
+  }
+
+  createMockWebhookSignature(rawBody: Buffer | string): string {
+    if (this.isProdRuntime() || this.getMode() !== 'mock') {
+      throw new InternalServerErrorException('Mock webhook signing is disabled')
+    }
+    const secret = this.getWebhookSecret()
+    if (!secret) {
+      throw new InternalServerErrorException('Mock webhook secret is unavailable')
+    }
+    return computeWebhookHmac(rawBody, secret)
+  }
+
   /** Used in non-production tests to simulate a captured payment existing at gateway before release. */
   mockRecordCapturedPayment(
     gatewayOrderId: string,
@@ -211,6 +261,24 @@ export class PaymentGatewayService {
     this.mockOrders.set(gatewayOrderId, {
       amountPaise,
       capturedPaymentId: gatewayPaymentId,
+      authorizedPaymentId: null,
+      refunded: false,
+    })
+  }
+
+  /** Used in non-production tests to simulate an authorized (in-flight) payment that must not be released. */
+  mockRecordAuthorizedPayment(
+    gatewayOrderId: string,
+    gatewayPaymentId: string,
+    amountPaise: number,
+  ): void {
+    if (this.isProdRuntime() || this.getMode() !== 'mock') {
+      throw new InternalServerErrorException('Mock payment simulation is disabled')
+    }
+    this.mockOrders.set(gatewayOrderId, {
+      amountPaise,
+      capturedPaymentId: null,
+      authorizedPaymentId: gatewayPaymentId,
       refunded: false,
     })
   }
@@ -218,9 +286,29 @@ export class PaymentGatewayService {
   async fetchOrderPaymentStatus(gatewayOrderId: string): Promise<GatewayOrderPaymentStatus> {
     if (this.getMode() === 'mock') {
       const record = this.mockOrders.get(gatewayOrderId)
+      if (record?.capturedPaymentId) {
+        return {
+          status: 'captured',
+          capturedPaymentId: record.capturedPaymentId,
+          capturedAmountPaise: record.amountPaise,
+          authorizedPaymentId: null,
+          raw: record,
+        }
+      }
+      if (record?.authorizedPaymentId) {
+        return {
+          status: 'authorized',
+          capturedPaymentId: null,
+          capturedAmountPaise: null,
+          authorizedPaymentId: record.authorizedPaymentId,
+          raw: record,
+        }
+      }
       return {
-        capturedPaymentId: record?.capturedPaymentId ?? null,
-        capturedAmountPaise: record?.capturedPaymentId ? record.amountPaise : null,
+        status: 'none',
+        capturedPaymentId: null,
+        capturedAmountPaise: null,
+        authorizedPaymentId: null,
         raw: record ?? null,
       }
     }
@@ -239,17 +327,45 @@ export class PaymentGatewayService {
           gatewayOrderId,
           status: res.status,
         })
-        return { capturedPaymentId: null, capturedAmountPaise: null }
+        return {
+          status: 'none',
+          capturedPaymentId: null,
+          capturedAmountPaise: null,
+          authorizedPaymentId: null,
+        }
       }
 
       const json = (await res.json()) as {
         items?: Array<{ id?: string; status?: string; amount?: number }>
       }
-      const captured = (json.items ?? []).find((item) => item.status === 'captured' && item.id)
+      const items = json.items ?? []
+      const captured = items.find((item) => item.status === 'captured' && item.id)
+      if (captured?.id) {
+        return {
+          status: 'captured',
+          capturedPaymentId: captured.id,
+          capturedAmountPaise: typeof captured.amount === 'number' ? captured.amount : null,
+          authorizedPaymentId: null,
+          raw: captured,
+        }
+      }
+      const authorized = items.find((item) => item.status === 'authorized' && item.id)
+      if (authorized?.id) {
+        return {
+          status: 'authorized',
+          capturedPaymentId: null,
+          capturedAmountPaise: null,
+          authorizedPaymentId: authorized.id,
+          raw: authorized,
+        }
+      }
+      const failed = items.find((item) => item.status === 'failed')
       return {
-        capturedPaymentId: captured?.id ?? null,
-        capturedAmountPaise: typeof captured?.amount === 'number' ? captured.amount : null,
-        raw: captured ?? null,
+        status: failed ? 'failed' : 'none',
+        capturedPaymentId: null,
+        capturedAmountPaise: null,
+        authorizedPaymentId: null,
+        raw: failed ?? null,
       }
     } catch (error) {
       this.logger.warn({
@@ -257,7 +373,12 @@ export class PaymentGatewayService {
         gatewayOrderId,
         error: error instanceof Error ? error.message : 'unknown error',
       })
-      return { capturedPaymentId: null, capturedAmountPaise: null }
+      return {
+        status: 'none',
+        capturedPaymentId: null,
+        capturedAmountPaise: null,
+        authorizedPaymentId: null,
+      }
     }
   }
 

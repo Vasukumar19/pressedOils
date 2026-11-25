@@ -34,6 +34,7 @@ async function main() {
   const showTaxBreakdown = parseBoolFlag(readFlag(args, '--show-tax'))
   const codEnabled = parseBoolFlag(readFlag(args, '--cod'))
   const legalApproved = parseBoolFlag(readFlag(args, '--legal-approved'))
+  const autoConfirmEnabled = parseBoolFlag(readFlag(args, '--auto-confirm'))
 
   if (
     freeShippingEnabled === undefined &&
@@ -42,10 +43,11 @@ async function main() {
     payAtStoreEnabled === undefined &&
     showTaxBreakdown === undefined &&
     codEnabled === undefined &&
-    legalApproved === undefined
+    legalApproved === undefined &&
+    autoConfirmEnabled === undefined
   ) {
     throw new Error(
-      'Provide at least one setting: --free-shipping, --threshold, --store-pickup, --pay-at-store, --show-tax, --cod, or --legal-approved',
+      'Provide at least one setting: --free-shipping, --threshold, --store-pickup, --pay-at-store, --show-tax, --cod, --legal-approved, or --auto-confirm',
     )
   }
 
@@ -208,6 +210,28 @@ async function main() {
             action: 'CLI_UPDATE_TAX_DISPLAY_SETTING',
             entity: 'setting',
             entity_id: SETTING_KEYS.TAX_DISPLAY_CONFIG,
+            before: (prev?.value ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextVal as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (autoConfirmEnabled !== undefined) {
+        const prev = await tx.setting.findUnique({
+          where: { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS },
+        })
+        const nextVal = { enabled: autoConfirmEnabled }
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS },
+          update: { value: nextVal },
+          create: { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS, value: nextVal },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'CLI_UPDATE_AUTO_CONFIRM_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS,
             before: (prev?.value ?? undefined) as Prisma.InputJsonValue | undefined,
             after: nextVal as Prisma.InputJsonValue,
           },

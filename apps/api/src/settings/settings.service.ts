@@ -13,7 +13,7 @@ import { env } from '../env'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 
-const SETTINGS_CACHE_KEY = 'settings:public:v3'
+const SETTINGS_CACHE_KEY = 'settings:public:v4'
 const SETTINGS_CACHE_TTL_SECONDS = 5
 
 const PUBLIC_SETTING_KEY_LIST = [
@@ -25,6 +25,7 @@ const PUBLIC_SETTING_KEY_LIST = [
   SETTING_KEYS.STORE_PICKUP_CONFIG,
   SETTING_KEYS.COD_CONFIG,
   SETTING_KEYS.LEGAL_PAGES_CONFIG,
+  SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS,
   SETTING_KEYS.STORE_INFO,
   SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION,
 ]
@@ -49,6 +50,7 @@ export interface InternalPricingSettings {
   maxActiveCodOrdersPerPhone: number
   legalPagesApproved: boolean
   dpdpPolicyVersion: string
+  autoConfirmPaidOrders: boolean
   fssaiNumber: string
   supportEmail: string
   supportPhone: string
@@ -115,6 +117,7 @@ export class SettingsService {
         const storePickup = byKey.get(SETTING_KEYS.STORE_PICKUP_CONFIG)
         const codCfg = byKey.get(SETTING_KEYS.COD_CONFIG)
         const legalCfg = byKey.get(SETTING_KEYS.LEGAL_PAGES_CONFIG)
+        const autoConfirmCfg = byKey.get(SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS)
         const store = byKey.get(SETTING_KEYS.STORE_INFO)
         const labReq = byKey.get(SETTING_KEYS.REQUIRE_LAB_REPORT_FOR_ACTIVATION)
 
@@ -172,6 +175,8 @@ export class SettingsService {
             typeof legalCfg?.privacyVersion === 'string'
               ? legalCfg.privacyVersion
               : env.LEGAL_PRIVACY_VERSION,
+          autoConfirmPaidOrders:
+            typeof autoConfirmCfg?.enabled === 'boolean' ? autoConfirmCfg.enabled : true,
           fssaiNumber: typeof store?.fssaiNumber === 'string' ? store.fssaiNumber : 'TODO(owner)',
           supportEmail:
             typeof store?.supportEmail === 'string' ? store.supportEmail : 'TODO(owner)',
@@ -231,6 +236,7 @@ export class SettingsService {
       codMaxOrderPaise: internal.codEnabled ? internal.codMaxOrderPaise : null,
       legalPagesApproved: internal.legalPagesApproved,
       dpdpPolicyVersion: internal.dpdpPolicyVersion,
+      autoConfirmPaidOrders: internal.autoConfirmPaidOrders,
       checkoutEnabled,
       paymentGateway: isProd ? 'razorpay' : env.PAYMENT_GATEWAY,
       fssaiNumber: internal.fssaiNumber,

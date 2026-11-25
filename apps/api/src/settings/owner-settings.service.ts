@@ -44,6 +44,7 @@ export class OwnerSettingsService {
     if (dto.taxDisplay) keysToRead.push(SETTING_KEYS.TAX_DISPLAY_CONFIG)
     if (dto.cod) keysToRead.push(SETTING_KEYS.COD_CONFIG)
     if (dto.legalPages) keysToRead.push(SETTING_KEYS.LEGAL_PAGES_CONFIG)
+    if (dto.autoConfirmPaidOrders) keysToRead.push(SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS)
 
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.setting.findMany({
@@ -223,6 +224,27 @@ export class OwnerSettingsService {
             entity_id: SETTING_KEYS.LEGAL_PAGES_CONFIG,
             before: (prevLegal ?? undefined) as Prisma.InputJsonValue | undefined,
             after: nextLegal as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      if (dto.autoConfirmPaidOrders) {
+        const prevAutoConfirm = existingMap.get(SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS) ?? null
+        const nextAutoConfirm = { enabled: dto.autoConfirmPaidOrders.enabled }
+
+        await tx.setting.upsert({
+          where: { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS },
+          update: { value: nextAutoConfirm },
+          create: { key: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS, value: nextAutoConfirm },
+        })
+        await tx.auditLog.create({
+          data: {
+            admin_id: owner.id,
+            action: 'UPDATE_AUTO_CONFIRM_PAID_ORDERS_SETTING',
+            entity: 'setting',
+            entity_id: SETTING_KEYS.AUTO_CONFIRM_PAID_ORDERS,
+            before: (prevAutoConfirm ?? undefined) as Prisma.InputJsonValue | undefined,
+            after: nextAutoConfirm as Prisma.InputJsonValue,
           },
         })
       }

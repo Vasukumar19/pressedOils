@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { Injectable } from '@nestjs/common'
 import {
   type CheckoutRequest,
@@ -50,6 +50,29 @@ export class CheckoutSecurityService {
     const expected = this.hashPickupCode(orderId, candidateCode)
     if (expected.length !== storedHmacHash.length) return false
     return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(storedHmacHash, 'utf8'))
+  }
+
+  /**
+   * Generates a per-order unguessable checkout token (returned in the POST /checkout session)
+   * and its HMAC-SHA256 digest stored in orders.checkout_token_hash for POST /checkout/fail auth.
+   */
+  createCheckoutTokenPair(orderId: string): { plaintextToken: string; tokenHash: string } {
+    const plaintextToken = randomBytes(24).toString('base64url')
+    const tokenHash = this.hashCheckoutToken(orderId, plaintextToken)
+    return { plaintextToken, tokenHash }
+  }
+
+  hashCheckoutToken(orderId: string, token: string): string {
+    return createHmac('sha256', this.getPickupHmacSecret())
+      .update(`checkout:${orderId}:${token.trim()}`)
+      .digest('hex')
+  }
+
+  verifyCheckoutToken(orderId: string, candidateToken: string, storedHash: string | null): boolean {
+    if (!storedHash || !candidateToken || candidateToken.trim().length < 16) return false
+    const expected = this.hashCheckoutToken(orderId, candidateToken)
+    if (expected.length !== storedHash.length) return false
+    return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(storedHash, 'utf8'))
   }
 
   /**

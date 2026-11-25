@@ -7,12 +7,15 @@ import { CheckoutModule } from './checkout/checkout.module'
 import { ThrottlerIpGuard } from './common/throttler-ip.guard'
 import { env } from './env'
 import { HealthModule } from './health/health.module'
+import { OrdersModule } from './orders/orders.module'
 import { PincodeModule } from './pincode/pincode.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { ProductsModule } from './products/products.module'
+import { QueueModule } from './queue/queue.module'
 import { RedisModule } from './redis/redis.module'
 import { ResilientThrottlerStorage } from './redis/resilient-throttler.storage'
 import { SettingsModule } from './settings/settings.module'
+import { WebhooksModule } from './webhooks/webhooks.module'
 
 @Module({
   imports: [
@@ -43,6 +46,7 @@ import { SettingsModule } from './settings/settings.module'
     }),
     PrismaModule,
     RedisModule,
+    QueueModule,
     ThrottlerModule.forRootAsync({
       inject: [ResilientThrottlerStorage],
       useFactory: (storage: ResilientThrottlerStorage) => ({
@@ -56,6 +60,8 @@ import { SettingsModule } from './settings/settings.module'
     SettingsModule,
     CartModule,
     CheckoutModule,
+    WebhooksModule,
+    OrdersModule,
   ],
   providers: [
     {

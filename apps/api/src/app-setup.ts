@@ -16,9 +16,14 @@ export function buildOpenApiConfig() {
     .addTag('products', 'Catalog, product detail, and live availability')
     .addTag('cart', 'Server cart validation, pricing, coupons, and fulfilment checks')
     .addTag('checkout', 'Checkout, inventory reservations, COD, and Razorpay verification')
+    .addTag('webhooks', 'Verified payment gateway webhooks (raw-body HMAC + replay idempotency)')
     .addTag('pincode', 'Delivery serviceability, TAT, COD, and shipping fees')
     .addTag('settings', 'Public store configuration and thresholds')
     .addTag('admin-settings', 'Protected owner settings controls (pre-Phase 9)')
+    .addTag(
+      'admin-orders',
+      'Protected dev/staging order cancel, refund & return actions (pre-Phase 9)',
+    )
     .build()
 }
 
@@ -32,7 +37,14 @@ export function configureApp(app: INestApplication, currentEnv: Env): void {
   expressApp.set('trust proxy', parseTrustProxy(currentEnv.TRUST_PROXY))
   expressApp.use(requestIdMiddleware)
   expressApp.use(helmet())
-  expressApp.use(express.json({ limit: '100kb' }))
+  expressApp.use(
+    express.json({
+      limit: '256kb',
+      verify: (req, _res, buf) => {
+        ;(req as express.Request & { rawBody?: Buffer }).rawBody = buf
+      },
+    }),
+  )
   expressApp.use(express.urlencoded({ extended: true, limit: '100kb' }))
 
   app.setGlobalPrefix('api')
@@ -55,6 +67,7 @@ export function configureApp(app: INestApplication, currentEnv: Env): void {
       'Content-Type',
       'Idempotency-Key',
       'X-Cart-Session',
+      'X-Order-Token',
       'X-Admin-Secret',
       'X-Admin-Email',
     ],

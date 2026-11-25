@@ -221,13 +221,10 @@
             "description": "Updated public settings snapshot (audit logged)"
           },
           "403": {
-            "description": "Forbidden: invalid secret or non-OWNER admin"
-          },
-          "503": {
-            "description": "OWNER_SETTINGS_SECRET not configured"
+            "description": "Forbidden: disabled in production, invalid secret, or non-OWNER admin"
           }
         },
-        "summary": "Owner-only pre-Phase-9 settings switch (free shipping promo, pickup, tax display)",
+        "summary": "Owner-only dev/staging settings switch (disabled in production until Phase 9 Admin 2FA)",
         "tags": ["admin-settings"]
       }
     },
@@ -345,6 +342,175 @@
         "summary": "Non-production dev/staging helper to complete mock online payment (403 in production)",
         "tags": ["checkout"]
       }
+    },
+    "/api/webhooks/razorpay": {
+      "post": {
+        "operationId": "WebhooksController_handleRazorpayWebhook",
+        "parameters": [
+          {
+            "name": "x-razorpay-event-id",
+            "in": "header",
+            "description": "Unique Razorpay event delivery identifier for strict idempotent deduplication",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-razorpay-signature",
+            "in": "header",
+            "description": "HMAC-SHA256 signature computed over the exact raw request body",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook verified and acknowledged"
+          },
+          "401": {
+            "description": "Invalid or missing Razorpay webhook signature"
+          }
+        },
+        "summary": "Receive and process Razorpay webhooks (verifies X-Razorpay-Signature over exact raw bytes first)",
+        "tags": ["webhooks"]
+      }
+    },
+    "/api/admin/orders/{id}/confirm": {
+      "post": {
+        "operationId": "AdminOrdersController_confirmOrder",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order confirmed cleanly"
+          },
+          "403": {
+            "description": "Disabled in production or invalid admin credentials"
+          }
+        },
+        "summary": "Temporary admin endpoint to transition a PAID or COD_PENDING order to CONFIRMED (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/cancel": {
+      "post": {
+        "operationId": "AdminOrdersController_cancelOrder",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order cancelled and stock restored cleanly"
+          },
+          "409": {
+            "description": "Order already cancelled; double-restock prevented"
+          }
+        },
+        "summary": "Cancel an unshipped order, restore stock ONCE, write AuditLog, and initiate refund if paid (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/refund": {
+      "post": {
+        "operationId": "AdminOrdersController_refundOrder",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Refund initiated (or idempotent replay)"
+          }
+        },
+        "summary": "Initiate a full or partial Razorpay refund with Idempotency-Key; finalized by refund.processed webhook (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
+    },
+    "/api/admin/orders/{id}/return-stock": {
+      "post": {
+        "operationId": "AdminOrdersController_returnOrderStock",
+        "parameters": [
+          {
+            "name": "x-admin-email",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-admin-secret",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Return stock inspection recorded cleanly"
+          }
+        },
+        "summary": "Record inspected physical return stock (sealed restock vs damaged write-off) on post-shipment orders (disabled in prod)",
+        "tags": ["admin-orders"]
+      }
     }
   },
   "info": {
@@ -371,6 +537,10 @@
       "description": "Checkout, inventory reservations, COD, and Razorpay verification"
     },
     {
+      "name": "webhooks",
+      "description": "Verified payment gateway webhooks (raw-body HMAC + replay idempotency)"
+    },
+    {
       "name": "pincode",
       "description": "Delivery serviceability, TAT, COD, and shipping fees"
     },
@@ -381,6 +551,10 @@
     {
       "name": "admin-settings",
       "description": "Protected owner settings controls (pre-Phase 9)"
+    },
+    {
+      "name": "admin-orders",
+      "description": "Protected dev/staging order cancel, refund & return actions (pre-Phase 9)"
     }
   ],
   "servers": [],

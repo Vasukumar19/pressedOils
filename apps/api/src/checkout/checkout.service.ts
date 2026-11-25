@@ -6,8 +6,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleDestroy,
-  OnModuleInit,
 } from '@nestjs/common'
 import {
   CouponType as PrismaCouponType,
@@ -58,7 +56,8 @@ import { env } from '../env'
 import { PincodeService } from '../pincode/pincode.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProductCacheService } from '../products/products.cache'
-import { RedisService } from '../redis/redis.service'
+import { OpsAlertService } from '../queue/ops-alert.service'
+import { QueueService } from '../queue/queue.service'
 import { SettingsService } from '../settings/settings.service'
 import { CheckoutSecurityService } from './checkout-security.service'
 import { PaymentGatewayService } from './payment-gateway.service'
@@ -83,7 +82,6 @@ const ALREADY_PAID_STATUSES = new Set<string>([
 
 const INVALID_COUPON_MESSAGE = "This code isn't valid"
 const IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_-]{16,128}$/
-const EXPIRY_SWEEP_INTERVAL_MS = 60_000
 
 interface LockedVariantRow {
   id: string
@@ -118,10 +116,9 @@ export interface MarkOrderPaidOutcome {
 }
 
 @Injectable()
-export class CheckoutService implements OnModuleInit, OnModuleDestroy {
+export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name)
   private readonly idempotencySingleFlight = new SingleFlight()
-  private sweepTimer: NodeJS.Timeout | null = null
 
   constructor(
     private readonly prisma: PrismaService,
@@ -131,37 +128,9 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
     private readonly cartRateLimitService: CartRateLimitService,
     private readonly checkoutSecurity: CheckoutSecurityService,
     private readonly paymentGateway: PaymentGatewayService,
-    private readonly redis: RedisService,
+    private readonly queueService: QueueService,
+    private readonly opsAlertService: OpsAlertService,
   ) {}
-
-  onModuleInit(): void {
-    if (env.NODE_ENV === 'test') return
-    this.sweepTimer = setInterval(() => {
-      void this.runScheduledExpirySweep()
-    }, EXPIRY_SWEEP_INTERVAL_MS)
-    this.sweepTimer.unref()
-  }
-
-  onModuleDestroy(): void {
-    if (this.sweepTimer) {
-      clearInterval(this.sweepTimer)
-      this.sweepTimer = null
-    }
-  }
-
-  private async runScheduledExpirySweep(): Promise<void> {
-    const lockKey = 'checkout:expiry-sweep-lock'
-    const acquired = await this.redis.setStringNx(lockKey, '1', 50)
-    if (acquired === false) return
-    try {
-      await this.releaseExpiredReservations()
-    } catch (error) {
-      this.logger.error({
-        event: 'RESERVATION_EXPIRY_SWEEP_ERROR',
-        error: error instanceof Error ? error.message : 'unknown sweep error',
-      })
-    }
-  }
 
   private isProdRuntime(): boolean {
     return isProductionRuntime({
@@ -294,6 +263,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
       | {
           kind: 'CREATED'
           orderId: string
+          checkoutToken: string | null
           orderSummary: CheckoutOrderSummaryDto
           variantIds: string[]
         }
@@ -600,6 +570,9 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
           const orderId = randomUUID()
           const orderNumber = this.checkoutSecurity.generateOrderNumber()
           const isOnline = dto.paymentMethod === PAYMENT_METHOD.ONLINE
+          const checkoutTokenPair = isOnline
+            ? this.checkoutSecurity.createCheckoutTokenPair(orderId)
+            : null
 
           let plaintextPickupCode: string | null = null
           let pickupCodeHash: string | null = null
@@ -638,6 +611,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
               pickup_location_id: resolvedPickupLocation?.id ?? null,
               pickup_code_hash: pickupCodeHash,
               pickup_ready_at: pickupReadyAt,
+              checkout_token_hash: checkoutTokenPair?.tokenHash ?? null,
               dpdp_consent_at: new Date(),
               dpdp_policy_version: pricingSettings.dpdpPolicyVersion,
               marketing_consent: dto.marketingConsent,
@@ -717,6 +691,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
             fulfilmentMethod: dto.fulfilmentMethod,
             paymentMethod: dto.paymentMethod,
             paymentStatus: 'PENDING',
+            refundedPaise: 0,
             orderStatus: isOnline ? 'PENDING_PAYMENT' : 'COD_PENDING',
             itemsSubtotalPaise,
             discountPaise,
@@ -785,6 +760,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
           return {
             kind: 'CREATED' as const,
             orderId: createdOrder.id,
+            checkoutToken: checkoutTokenPair?.plaintextToken ?? null,
             orderSummary,
             variantIds: sortedVariantIds,
           }
@@ -814,6 +790,12 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
     await this.productCacheService.invalidateProductCache(undefined, txOutcome.variantIds)
 
     if (txOutcome.orderSummary.paymentMethod === PAYMENT_METHOD.COD) {
+      void this.queueService.enqueueCustomerNotification({
+        event: 'ORDER_PLACED_COD',
+        orderId: txOutcome.orderSummary.id,
+        orderNumber: txOutcome.orderSummary.orderNumber,
+        message: `COD/Pay-at-store order ${txOutcome.orderSummary.orderNumber} placed cleanly`,
+      })
       return checkoutResponseSchema.parse({
         order: txOutcome.orderSummary,
         payment: null,
@@ -832,6 +814,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
         gateway: gatewayOrder.gateway,
         keyId: gatewayOrder.keyId,
         gatewayOrderId: gatewayOrder.gatewayOrderId,
+        checkoutToken: txOutcome.checkoutToken!,
         amountPaise: txOutcome.orderSummary.totalPaise,
         currency: 'INR' as const,
         brandName: pricingSettings.brandName,
@@ -1012,11 +995,12 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException('Order not found')
       }
 
-      // Already captured / paid -> strict idempotent no-op
+      // Already captured / paid / refunded -> strict idempotent no-op
       if (
         existingByPaymentId?.status === PrismaPaymentStatus.CAPTURED ||
         ALREADY_PAID_STATUSES.has(lockedOrder.order_status) ||
-        lockedOrder.payment_status === PrismaPaymentStatus.REFUNDED
+        lockedOrder.payment_status === PrismaPaymentStatus.REFUNDED ||
+        lockedOrder.payment_status === PrismaPaymentStatus.PARTIALLY_REFUNDED
       ) {
         const summary = await this.loadOrderSummary(tx, lockedOrder.id, null, pricingSettings)
         return {
@@ -1118,10 +1102,14 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
           rawPayload: input.rawPayload,
         })
 
+        const finalOrderStatus = pricingSettings.autoConfirmPaidOrders
+          ? PrismaOrderStatus.CONFIRMED
+          : PrismaOrderStatus.PAID
+
         await tx.order.update({
           where: { id: lockedOrder.id },
           data: {
-            order_status: PrismaOrderStatus.PAID,
+            order_status: finalOrderStatus,
             payment_status: PrismaPaymentStatus.CAPTURED,
             pickup_code_hash: pickupCodeHash,
             pickup_ready_at: pickupReadyAt,
@@ -1136,6 +1124,17 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
             actor: `payment:${input.source}`,
           },
         })
+
+        if (finalOrderStatus === PrismaOrderStatus.CONFIRMED) {
+          await tx.orderEvent.create({
+            data: {
+              order_id: lockedOrder.id,
+              status: PrismaOrderStatus.CONFIRMED,
+              note: 'Order auto-confirmed after payment capture (auto_confirm_paid_orders=true)',
+              actor: 'system:auto-confirm',
+            },
+          })
+        }
 
         const summary = await this.loadOrderSummary(
           tx,
@@ -1324,6 +1323,21 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
 
     if (txResult.kind === 'PAID') {
       await this.productCacheService.invalidateProductCache(undefined, txResult.variantIds)
+      void this.queueService.enqueueCustomerNotification({
+        event: txResult.summary.orderStatus === 'CONFIRMED' ? 'ORDER_CONFIRMED' : 'ORDER_PAID',
+        orderId: txResult.summary.id,
+        orderNumber: txResult.summary.orderNumber,
+        message: `Order ${txResult.summary.orderNumber} payment confirmed (${txResult.summary.orderStatus}) via ${input.source}`,
+      })
+      if (txResult.summary.needsAttention) {
+        void this.opsAlertService.alertCritical({
+          alertKey: 'late-payment-reallocated',
+          severity: 'HIGH',
+          orderId: txResult.summary.id,
+          message: `Late payment for order ${txResult.summary.orderNumber} re-allocated stock after expiry; paused in PAID for review`,
+          details: { gatewayPaymentId: input.gatewayPaymentId, source: input.source },
+        })
+      }
       return {
         order: txResult.summary,
         alreadyProcessed: false,
@@ -1342,15 +1356,31 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
 
     const updatedSummary = await this.prisma.$transaction(async (tx) => {
       if (refund.refunded) {
+        const paymentRow = await tx.payment.findUnique({
+          where: { gateway_payment_id: input.gatewayPaymentId },
+          select: { id: true },
+        })
         await tx.payment.updateMany({
           where: { gateway_payment_id: input.gatewayPaymentId },
           data: { status: PrismaPaymentStatus.REFUNDED },
+        })
+        await tx.refund.create({
+          data: {
+            order_id: txResult.summary.id,
+            payment_id: paymentRow?.id ?? null,
+            gateway_refund_id: refund.refundId ?? `rfnd_auto_${txResult.summary.id.slice(0, 12)}`,
+            amount_paise: txResult.refundAmountPaise,
+            status: 'PROCESSED',
+            reason: 'Stock sold out after 15-minute checkout reservation expired',
+            initiated_by: 'system:auto-refund',
+          },
         })
         await tx.order.update({
           where: { id: txResult.summary.id },
           data: {
             order_status: PrismaOrderStatus.CANCELLED,
             payment_status: PrismaPaymentStatus.REFUNDED,
+            refunded_paise: txResult.refundAmountPaise,
             needs_attention: true,
           },
         })
@@ -1375,6 +1405,30 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
       return this.loadOrderSummary(tx, txResult.summary.id, null, pricingSettings)
     })
 
+    if (refund.refunded) {
+      void this.queueService.enqueueCustomerNotification({
+        event: 'ORDER_LATE_OOS_REFUNDED',
+        orderId: updatedSummary.id,
+        orderNumber: updatedSummary.orderNumber,
+        message: `Late payment for ${updatedSummary.orderNumber} auto-refunded (${txResult.refundAmountPaise} paise) because stock ran out`,
+      })
+      void this.opsAlertService.alertCritical({
+        alertKey: 'late-payment-oos-autorefund',
+        severity: 'HIGH',
+        orderId: updatedSummary.id,
+        message: `Late payment arrived after stock ran out on order ${updatedSummary.orderNumber}; auto-refunded ${txResult.refundAmountPaise} paise`,
+        details: { gatewayPaymentId: input.gatewayPaymentId, refundId: refund.refundId },
+      })
+    } else {
+      void this.opsAlertService.alertCritical({
+        alertKey: 'late-payment-oos-refund-failed',
+        severity: 'CRITICAL',
+        orderId: updatedSummary.id,
+        message: `Late OOS auto-refund FAILED on order ${updatedSummary.orderNumber}; manual gateway refund required`,
+        details: { gatewayPaymentId: input.gatewayPaymentId, error: refund.error },
+      })
+    }
+
     return {
       order: updatedSummary,
       alreadyProcessed: false,
@@ -1383,6 +1437,79 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
       message: refund.refunded
         ? 'Your payment arrived after the reservation expired and items sold out. A full refund has been initiated automatically.'
         : 'Your payment arrived after the items sold out. Our team has flagged your order for an immediate refund.',
+    }
+  }
+
+  /**
+   * Flags an order for manual human investigation when a gateway payment has a mismatched
+   * amount or non-INR currency. Refuses to transition to PAID and does not auto-refund.
+   */
+  async flagPaymentAmountMismatch(input: {
+    orderId: string
+    gatewayOrderId: string
+    gatewayPaymentId: string
+    actualAmountPaise: number | null
+    actualCurrency: string | null
+    rawPayload?: unknown
+    source: string
+  }): Promise<void> {
+    const order = await this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRaw<
+        Array<{ id: string; order_number: string; total_paise: number }>
+      >`SELECT id, order_number, total_paise FROM orders WHERE id = ${input.orderId} FOR UPDATE`
+      const locked = lockedOrders[0]
+      if (!locked) {
+        return null
+      }
+
+      const existingByPay = await tx.payment.findUnique({
+        where: { gateway_payment_id: input.gatewayPaymentId },
+      })
+      if (!existingByPay) {
+        await tx.payment.create({
+          data: {
+            order_id: locked.id,
+            gateway: this.paymentGateway.getMode(),
+            gateway_order_id: input.gatewayOrderId,
+            gateway_payment_id: input.gatewayPaymentId,
+            amount_paise: input.actualAmountPaise ?? 0,
+            status: PrismaPaymentStatus.FAILED,
+            raw_payload: (input.rawPayload ?? undefined) as Prisma.InputJsonValue | undefined,
+          },
+        })
+      }
+
+      await tx.order.update({
+        where: { id: locked.id },
+        data: { needs_attention: true },
+      })
+
+      await tx.orderEvent.create({
+        data: {
+          order_id: locked.id,
+          status: PrismaOrderStatus.PENDING_PAYMENT,
+          note: `PAYMENT MISMATCH ALERT (${input.source}): gateway payment ${input.gatewayPaymentId} has amount=${input.actualAmountPaise} currency=${input.actualCurrency}, expected=${locked.total_paise} INR. Held without marking PAID or auto-refunding.`,
+          actor: `security:${input.source}`,
+        },
+      })
+      return locked
+    })
+
+    if (order) {
+      await this.opsAlertService.alertCritical({
+        alertKey: 'payment-amount-currency-mismatch',
+        severity: 'CRITICAL',
+        orderId: order.id,
+        message: `CRITICAL: Payment mismatch on ${order.order_number}. Expected ${order.total_paise} INR, received ${input.actualAmountPaise} ${input.actualCurrency}. Do NOT auto-refund — human decision required.`,
+        details: {
+          gatewayOrderId: input.gatewayOrderId,
+          gatewayPaymentId: input.gatewayPaymentId,
+          expectedPaise: order.total_paise,
+          actualPaise: input.actualAmountPaise,
+          actualCurrency: input.actualCurrency,
+          source: input.source,
+        },
+      })
     }
   }
 
@@ -1429,6 +1556,88 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
   }
 
   async failOrCancelCheckout(dto: CheckoutFailRequest): Promise<CheckoutFailResponseDto> {
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id: dto.orderId },
+      select: {
+        id: true,
+        order_number: true,
+        order_status: true,
+        total_paise: true,
+        checkout_token_hash: true,
+        payments: {
+          where: { gateway_order_id: { not: null } },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
+    })
+    if (!existingOrder) {
+      throw new NotFoundException('Order not found')
+    }
+
+    const tokenValid = this.checkoutSecurity.verifyCheckoutToken(
+      existingOrder.id,
+      dto.orderToken,
+      existingOrder.checkout_token_hash,
+    )
+    if (!tokenValid) {
+      throw new ForbiddenException('Invalid or missing checkout order token')
+    }
+
+    // Never release reservation on dismissal while a payment is authorized or already captured
+    const gatewayOrderId = existingOrder.payments[0]?.gateway_order_id
+    if (existingOrder.order_status === PrismaOrderStatus.PENDING_PAYMENT && gatewayOrderId) {
+      const gwStatus = await this.paymentGateway.fetchOrderPaymentStatus(gatewayOrderId)
+      if (gwStatus.status === 'captured' && gwStatus.capturedPaymentId) {
+        if (
+          gwStatus.capturedAmountPaise !== null &&
+          gwStatus.capturedAmountPaise !== existingOrder.total_paise
+        ) {
+          await this.flagPaymentAmountMismatch({
+            orderId: existingOrder.id,
+            gatewayOrderId,
+            gatewayPaymentId: gwStatus.capturedPaymentId,
+            actualAmountPaise: gwStatus.capturedAmountPaise,
+            actualCurrency: 'INR',
+            rawPayload: gwStatus.raw,
+            source: 'checkout-fail',
+          })
+          return checkoutFailResponseSchema.parse({
+            orderId: existingOrder.id,
+            orderNumber: existingOrder.order_number,
+            orderStatus: 'PENDING_PAYMENT',
+            released: false,
+            message: 'Payment requires manual amount verification.',
+          })
+        }
+
+        const outcome = await this.markOrderPaid({
+          orderId: existingOrder.id,
+          gatewayOrderId,
+          gatewayPaymentId: gwStatus.capturedPaymentId,
+          rawPayload: gwStatus.raw,
+          source: 'reconcile',
+        })
+        return checkoutFailResponseSchema.parse({
+          orderId: existingOrder.id,
+          orderNumber: existingOrder.order_number,
+          orderStatus: outcome.order.orderStatus === 'CONFIRMED' ? 'CONFIRMED' : 'PAID',
+          released: false,
+          message: 'Payment was already captured for this order.',
+        })
+      }
+
+      if (gwStatus.status === 'authorized') {
+        return checkoutFailResponseSchema.parse({
+          orderId: existingOrder.id,
+          orderNumber: existingOrder.order_number,
+          orderStatus: 'PENDING_PAYMENT',
+          released: false,
+          message: 'Payment is authorized or in progress; keeping stock reservation active.',
+        })
+      }
+    }
+
     const note = dto.errorDescription
       ? `${dto.reason}: ${dto.errorDescription}`
       : `Customer checkout ended with ${dto.reason}`
@@ -1463,11 +1672,13 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
             ? 'COD_PENDING'
             : order.order_status === PrismaOrderStatus.CANCELLED
               ? 'CANCELLED'
-              : 'PAID'
+              : order.order_status === PrismaOrderStatus.CONFIRMED
+                ? 'CONFIRMED'
+                : 'PAID'
         return {
           orderId: order.id,
           orderNumber: order.order_number,
-          orderStatus: safeStatus as 'CANCELLED' | 'PAID' | 'COD_PENDING',
+          orderStatus: safeStatus as 'CANCELLED' | 'PAID' | 'CONFIRMED' | 'COD_PENDING',
           released: false,
           variantIds: [] as string[],
           message:
@@ -1687,11 +1898,12 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Releases expired PENDING reservations past the 15-minute TTL + 2-minute grace window.
-   * Always queries Razorpay payment status BEFORE releasing stock so completed payments are captured cleanly.
+   * Always queries Razorpay payment status BEFORE releasing stock so captured or authorized
+   * payments are never dropped cleanly.
    */
   async releaseExpiredReservations(
     now: Date = new Date(),
-  ): Promise<{ expiredCount: number; recoveredPaidCount: number }> {
+  ): Promise<{ expiredCount: number; recoveredPaidCount: number; skippedAuthorizedCount: number }> {
     const cutoff = new Date(now.getTime() - RESERVATION_GRACE_MINUTES * 60_000)
 
     const staleRows = await this.prisma.reservation.findMany({
@@ -1706,16 +1918,41 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
 
     let expiredCount = 0
     let recoveredPaidCount = 0
+    let skippedAuthorizedCount = 0
 
     for (const row of staleRows) {
-      const payment = await this.prisma.payment.findFirst({
-        where: { order_id: row.order_id, gateway_order_id: { not: null } },
-        orderBy: { created_at: 'desc' },
+      const orderMeta = await this.prisma.order.findUnique({
+        where: { id: row.order_id },
+        select: {
+          id: true,
+          total_paise: true,
+          payments: {
+            where: { gateway_order_id: { not: null } },
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
+        },
       })
+      const payment = orderMeta?.payments[0]
 
-      if (payment?.gateway_order_id) {
+      if (payment?.gateway_order_id && orderMeta) {
         const status = await this.paymentGateway.fetchOrderPaymentStatus(payment.gateway_order_id)
-        if (status.capturedPaymentId) {
+        if (status.status === 'captured' && status.capturedPaymentId) {
+          if (
+            status.capturedAmountPaise !== null &&
+            status.capturedAmountPaise !== orderMeta.total_paise
+          ) {
+            await this.flagPaymentAmountMismatch({
+              orderId: orderMeta.id,
+              gatewayOrderId: payment.gateway_order_id,
+              gatewayPaymentId: status.capturedPaymentId,
+              actualAmountPaise: status.capturedAmountPaise,
+              actualCurrency: 'INR',
+              rawPayload: status.raw,
+              source: 'expiry-reconcile',
+            })
+            continue
+          }
           await this.markOrderPaid({
             orderId: row.order_id,
             gatewayOrderId: payment.gateway_order_id,
@@ -1724,6 +1961,10 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
             source: 'reconcile',
           })
           recoveredPaidCount += 1
+          continue
+        }
+        if (status.status === 'authorized') {
+          skippedAuthorizedCount += 1
           continue
         }
       }
@@ -1739,7 +1980,182 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    return { expiredCount, recoveredPaidCount }
+    return { expiredCount, recoveredPaidCount, skippedAuthorizedCount }
+  }
+
+  /**
+   * Reconciles stuck PENDING_PAYMENT orders directly against Razorpay within the given age window
+   * (`minAgeMinutes`..`maxAgeMinutes`) with batch caps and optional pauses to respect gateway rate limits.
+   * When `expireAfterMinutes` is passed (e.g. 24h aging sweep), uncaptured orders past that cutoff are expired.
+   */
+  async reconcileStuckPayments(options: {
+    minAgeMinutes: number
+    maxAgeMinutes: number
+    batchSize?: number
+    pauseMs?: number
+    expireAfterMinutes?: number
+    now?: Date
+  }): Promise<{
+    checkedCount: number
+    recoveredPaidCount: number
+    skippedAuthorizedCount: number
+    mismatchCount: number
+    expiredCount: number
+  }> {
+    const now = options.now ?? new Date()
+    const batchSize = options.batchSize ?? 50
+    const pauseMs = options.pauseMs ?? (env.NODE_ENV === 'test' ? 0 : 75)
+    const newerCutoff = new Date(now.getTime() - options.minAgeMinutes * 60_000)
+    const olderCutoff = new Date(now.getTime() - options.maxAgeMinutes * 60_000)
+
+    const candidates = await this.prisma.order.findMany({
+      where: {
+        payment_method: PrismaPaymentMethod.ONLINE,
+        order_status: PrismaOrderStatus.PENDING_PAYMENT,
+        needs_attention: false,
+        created_at: {
+          gte: olderCutoff,
+          lte: newerCutoff,
+        },
+      },
+      orderBy: { created_at: 'asc' },
+      take: batchSize,
+      select: {
+        id: true,
+        total_paise: true,
+        payments: {
+          where: { gateway_order_id: { not: null } },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
+    })
+
+    let checkedCount = 0
+    let recoveredPaidCount = 0
+    let skippedAuthorizedCount = 0
+    let mismatchCount = 0
+    let expiredCount = 0
+
+    for (const order of candidates) {
+      checkedCount += 1
+      const gatewayOrderId = order.payments[0]?.gateway_order_id
+      if (!gatewayOrderId) continue
+
+      const gwStatus = await this.paymentGateway.fetchOrderPaymentStatus(gatewayOrderId)
+      if (gwStatus.status === 'captured' && gwStatus.capturedPaymentId) {
+        if (
+          gwStatus.capturedAmountPaise !== null &&
+          gwStatus.capturedAmountPaise !== order.total_paise
+        ) {
+          await this.flagPaymentAmountMismatch({
+            orderId: order.id,
+            gatewayOrderId,
+            gatewayPaymentId: gwStatus.capturedPaymentId,
+            actualAmountPaise: gwStatus.capturedAmountPaise,
+            actualCurrency: 'INR',
+            rawPayload: gwStatus.raw,
+            source: 'reconcile',
+          })
+          mismatchCount += 1
+        } else {
+          await this.markOrderPaid({
+            orderId: order.id,
+            gatewayOrderId,
+            gatewayPaymentId: gwStatus.capturedPaymentId,
+            rawPayload: gwStatus.raw,
+            source: 'reconcile',
+          })
+          recoveredPaidCount += 1
+        }
+      } else if (gwStatus.status === 'authorized') {
+        skippedAuthorizedCount += 1
+      }
+
+      if (pauseMs > 0 && checkedCount < candidates.length) {
+        await new Promise((resolve) => setTimeout(resolve, pauseMs))
+      }
+    }
+
+    if (typeof options.expireAfterMinutes === 'number') {
+      const hardExpireCutoff = new Date(now.getTime() - options.expireAfterMinutes * 60_000)
+      const agedOrders = await this.prisma.order.findMany({
+        where: {
+          payment_method: PrismaPaymentMethod.ONLINE,
+          order_status: PrismaOrderStatus.PENDING_PAYMENT,
+          needs_attention: false,
+          created_at: { lte: hardExpireCutoff },
+        },
+        orderBy: { created_at: 'asc' },
+        take: batchSize,
+        select: {
+          id: true,
+          total_paise: true,
+          payments: {
+            where: { gateway_order_id: { not: null } },
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
+        },
+      })
+
+      for (const aged of agedOrders) {
+        checkedCount += 1
+        const gatewayOrderId = aged.payments[0]?.gateway_order_id
+        if (gatewayOrderId) {
+          const gwStatus = await this.paymentGateway.fetchOrderPaymentStatus(gatewayOrderId)
+          if (gwStatus.status === 'captured' && gwStatus.capturedPaymentId) {
+            if (
+              gwStatus.capturedAmountPaise !== null &&
+              gwStatus.capturedAmountPaise !== aged.total_paise
+            ) {
+              await this.flagPaymentAmountMismatch({
+                orderId: aged.id,
+                gatewayOrderId,
+                gatewayPaymentId: gwStatus.capturedPaymentId,
+                actualAmountPaise: gwStatus.capturedAmountPaise,
+                actualCurrency: 'INR',
+                rawPayload: gwStatus.raw,
+                source: 'reconcile-24h',
+              })
+              mismatchCount += 1
+              continue
+            }
+            await this.markOrderPaid({
+              orderId: aged.id,
+              gatewayOrderId,
+              gatewayPaymentId: gwStatus.capturedPaymentId,
+              rawPayload: gwStatus.raw,
+              source: 'reconcile',
+            })
+            recoveredPaidCount += 1
+            continue
+          }
+          if (gwStatus.status === 'authorized') {
+            skippedAuthorizedCount += 1
+            continue
+          }
+        }
+
+        const released = await this.releaseOrderReservationOnCancel(
+          aged.id,
+          'RECONCILE_24H_EXPIRED',
+          'Pending online payment abandoned after 24-hour gateway reconciliation window',
+          PrismaReservationStatus.EXPIRED,
+        )
+        if (released.released) {
+          expiredCount += 1
+        }
+      }
+    }
+
+    return {
+      checkedCount,
+      recoveredPaidCount,
+      skippedAuthorizedCount,
+      mismatchCount,
+      expiredCount,
+    }
   }
 
   /**
@@ -1867,6 +2283,7 @@ export class CheckoutService implements OnModuleInit, OnModuleDestroy {
       fulfilmentMethod: full.fulfilment_method,
       paymentMethod: full.payment_method,
       paymentStatus: full.payment_status as PaymentStatus,
+      refundedPaise: full.refunded_paise,
       orderStatus: full.order_status as OrderStatus,
       itemsSubtotalPaise: full.subtotal_paise,
       discountPaise: full.discount_paise,
