@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { CURRENCY, DEFAULT_MAX_QTY_PER_VARIANT } from '../constants'
 import { COUPON_TYPE, FULFILMENT_METHOD, PAYMENT_METHOD } from '../enums'
-import { indianPhoneSchema, indianPincodeSchema, paiseSchema } from './common'
+import { indianPhoneSchema, indianPincodeSchema, paiseSchema, positivePaiseSchema } from './common'
 
 export function createCartItemInputSchema(maxQty: number = DEFAULT_MAX_QTY_PER_VARIANT) {
   return z
@@ -244,6 +244,7 @@ export type CheckoutVerifyRequest = z.infer<typeof checkoutVerifyRequestSchema>
 export const checkoutFailRequestSchema = z
   .object({
     orderId: z.string().uuid(),
+    orderToken: z.string().trim().min(16).max(256),
     reason: z.enum(['PAYMENT_FAILED', 'MODAL_DISMISSED', 'CANCELLED']).default('PAYMENT_FAILED'),
     errorDescription: z.string().trim().max(300).optional(),
   })
@@ -269,7 +270,8 @@ export const checkoutOrderSummarySchema = z
     orderNumber: z.string().regex(/^ORD-\d{6}-[2-9A-HJ-NP-Z]{5}$/),
     fulfilmentMethod: z.enum([FULFILMENT_METHOD.DELIVERY, FULFILMENT_METHOD.STORE_PICKUP]),
     paymentMethod: z.enum([PAYMENT_METHOD.ONLINE, PAYMENT_METHOD.COD]),
-    paymentStatus: z.enum(['PENDING', 'CAPTURED', 'FAILED', 'REFUNDED']),
+    paymentStatus: z.enum(['PENDING', 'CAPTURED', 'FAILED', 'PARTIALLY_REFUNDED', 'REFUNDED']),
+    refundedPaise: paiseSchema.default(0),
     orderStatus: z.enum([
       'PENDING_PAYMENT',
       'COD_PENDING',
@@ -316,6 +318,7 @@ export const checkoutPaymentSessionSchema = z
     gateway: z.enum(['razorpay', 'mock']),
     keyId: z.string(),
     gatewayOrderId: z.string(),
+    checkoutToken: z.string().min(16),
     amountPaise: paiseSchema,
     currency: z.literal(CURRENCY),
     brandName: z.string(),
@@ -354,7 +357,7 @@ export const checkoutFailResponseSchema = z
   .object({
     orderId: z.string().uuid(),
     orderNumber: z.string(),
-    orderStatus: z.enum(['CANCELLED', 'PAID', 'COD_PENDING']),
+    orderStatus: z.enum(['PENDING_PAYMENT', 'CANCELLED', 'PAID', 'CONFIRMED', 'COD_PENDING']),
     released: z.boolean(),
     message: z.string(),
   })
@@ -433,14 +436,122 @@ export const ownerUpdateSettingsSchema = z
       })
       .strict()
       .optional(),
+    autoConfirmPaidOrders: z
+      .object({
+        enabled: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine(
-    (v) => Boolean(v.freeShipping || v.storePickup || v.taxDisplay || v.cod || v.legalPages),
+    (v) =>
+      Boolean(
+        v.freeShipping ||
+        v.storePickup ||
+        v.taxDisplay ||
+        v.cod ||
+        v.legalPages ||
+        v.autoConfirmPaidOrders,
+      ),
     'At least one setting group must be provided',
   )
 
 export type OwnerUpdateSettingsDto = z.infer<typeof ownerUpdateSettingsSchema>
+
+export const webhookAckResponseSchema = z
+  .object({
+    received: z.literal(true),
+    duplicate: z.boolean(),
+    eventId: z.string(),
+    outcome: z.enum(['PROCESSED', 'DUPLICATE', 'IGNORED', 'MISMATCH_ALERTED', 'RECORDED']),
+  })
+  .strict()
+
+export type WebhookAckResponseDto = z.infer<typeof webhookAckResponseSchema>
+
+export const adminConfirmOrderSchema = z
+  .object({
+    reason: z.string().trim().min(3).max(300).optional(),
+  })
+  .strict()
+
+export type AdminConfirmOrderDto = z.infer<typeof adminConfirmOrderSchema>
+
+export const adminCancelOrderSchema = z
+  .object({
+    reason: z.string().trim().min(3).max(300),
+  })
+  .strict()
+
+export type AdminCancelOrderDto = z.infer<typeof adminCancelOrderSchema>
+
+export const adminRefundOrderSchema = z
+  .object({
+    amountPaise: positivePaiseSchema.optional(),
+    reason: z.string().trim().min(3).max(300),
+  })
+  .strict()
+
+export type AdminRefundOrderDto = z.infer<typeof adminRefundOrderSchema>
+
+export const adminReturnStockSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            variantId: z.string().uuid(),
+            qty: z.number().int().positive(),
+            condition: z.enum(['SEALED_RESTOCK', 'DAMAGED_WRITEOFF']),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(50),
+    reason: z.string().trim().min(3).max(300),
+  })
+  .strict()
+
+export type AdminReturnStockDto = z.infer<typeof adminReturnStockSchema>
+
+export const adminCancelOrderResponseSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    orderNumber: z.string(),
+    orderStatus: z.literal('CANCELLED'),
+    restoredUnits: z.number().int().nonnegative(),
+    refundInitiated: z.boolean(),
+    refundId: z.string().uuid().nullable(),
+    gatewayRefundId: z.string().nullable(),
+  })
+  .strict()
+
+export type AdminCancelOrderResponseDto = z.infer<typeof adminCancelOrderResponseSchema>
+
+export const adminRefundOrderResponseSchema = z
+  .object({
+    refundId: z.string().uuid(),
+    orderId: z.string().uuid(),
+    orderNumber: z.string(),
+    amountPaise: positivePaiseSchema,
+    status: z.enum(['PENDING', 'PROCESSED', 'FAILED']),
+    gatewayRefundId: z.string().nullable(),
+    remainingRefundablePaise: paiseSchema,
+  })
+  .strict()
+
+export type AdminRefundOrderResponseDto = z.infer<typeof adminRefundOrderResponseSchema>
+
+export const adminReturnStockResponseSchema = z
+  .object({
+    orderId: z.string().uuid(),
+    restockedUnits: z.number().int().nonnegative(),
+    writtenOffUnits: z.number().int().nonnegative(),
+  })
+  .strict()
+
+export type AdminReturnStockResponseDto = z.infer<typeof adminReturnStockResponseSchema>
 
 export const publicSettingsResponseSchema = z
   .object({
@@ -460,6 +571,7 @@ export const publicSettingsResponseSchema = z
     codMaxOrderPaise: paiseSchema.nullable(),
     legalPagesApproved: z.boolean(),
     dpdpPolicyVersion: z.string().min(1),
+    autoConfirmPaidOrders: z.boolean(),
     checkoutEnabled: z.boolean(),
     paymentGateway: z.enum(['razorpay', 'mock']),
     fssaiNumber: z.string().min(1),

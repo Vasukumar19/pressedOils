@@ -17,6 +17,7 @@ describe('shared enums', () => {
   })
 
   it('PAYMENT_STATUS contains all expected states', () => {
-    expect(Object.keys(PAYMENT_STATUS)).toHaveLength(4)
+    expect(Object.keys(PAYMENT_STATUS)).toHaveLength(5)
+    expect(PAYMENT_STATUS.PARTIALLY_REFUNDED).toBe('PARTIALLY_REFUNDED')
   })
 })

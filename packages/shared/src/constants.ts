@@ -3,6 +3,7 @@ export const RESERVATION_TTL_MINUTES = 15 as const
 export const RESERVATION_GRACE_MINUTES = 2 as const
 export const IDEMPOTENCY_TTL_HOURS = 24 as const
 export const PICKUP_CODE_MAX_ATTEMPTS = 5 as const
+export const MAX_ONLINE_PAYMENT_FAILED_ATTEMPTS = 5 as const
 export const DEFAULT_MAX_QTY_PER_VARIANT = 10 as const
 export const DEFAULT_PAGE_SIZE = 12 as const
 export const MAX_PAGE_SIZE = 24 as const
@@ -27,6 +28,7 @@ export const SETTING_KEYS = {
   STORE_PICKUP_CONFIG: 'store_pickup_config',
   COD_CONFIG: 'cod_config',
   LEGAL_PAGES_CONFIG: 'legal_pages_config',
+  AUTO_CONFIRM_PAID_ORDERS: 'auto_confirm_paid_orders',
   STORE_INFO: 'store_info',
   REQUIRE_LAB_REPORT_FOR_ACTIVATION: 'require_lab_report_for_activation',
 } as const
@@ -42,6 +44,10 @@ export const CHECKOUT_RATE_LIMITS = {
   SESSION_PER_MIN: 12,
   IP_PER_MIN: 30,
   VERIFY_PER_MIN: 20,
+} as const
+
+export const TEMP_ADMIN_RATE_LIMITS = {
+  IP_PER_MIN: 20,
 } as const
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS]

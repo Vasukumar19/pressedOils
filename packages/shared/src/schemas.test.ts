@@ -252,11 +252,27 @@ describe('order status transitions and checkout validation', () => {
   it('allows valid status transitions and blocks invalid transitions', () => {
     expect(canTransitionOrderStatus(ORDER_STATUS.PENDING_PAYMENT, ORDER_STATUS.PAID)).toBe(true)
     expect(canTransitionOrderStatus(ORDER_STATUS.PAID, ORDER_STATUS.CONFIRMED)).toBe(true)
-    expect(canTransitionOrderStatus(ORDER_STATUS.PACKED, ORDER_STATUS.SHIPPED)).toBe(true)
+    expect(canTransitionOrderStatus(ORDER_STATUS.COD_PENDING, ORDER_STATUS.CONFIRMED)).toBe(true)
+    expect(canTransitionOrderStatus(ORDER_STATUS.PACKED, ORDER_STATUS.SHIPPED, 'DELIVERY')).toBe(
+      true,
+    )
+    expect(
+      canTransitionOrderStatus(ORDER_STATUS.PACKED, ORDER_STATUS.READY_FOR_PICKUP, 'STORE_PICKUP'),
+    ).toBe(true)
+    expect(
+      canTransitionOrderStatus(ORDER_STATUS.PACKED, ORDER_STATUS.SHIPPED, 'STORE_PICKUP'),
+    ).toBe(false)
+    expect(
+      canTransitionOrderStatus(ORDER_STATUS.PACKED, ORDER_STATUS.READY_FOR_PICKUP, 'DELIVERY'),
+    ).toBe(false)
     expect(canTransitionOrderStatus(ORDER_STATUS.PENDING_PAYMENT, ORDER_STATUS.DELIVERED)).toBe(
       false,
     )
     expect(canTransitionOrderStatus(ORDER_STATUS.CANCELLED, ORDER_STATUS.PAID)).toBe(false)
+    expect(canTransitionOrderStatus(ORDER_STATUS.CANCELLED, ORDER_STATUS.CANCELLED)).toBe(false)
+    expect(canTransitionOrderStatus(ORDER_STATUS.REFUNDED, ORDER_STATUS.CONFIRMED)).toBe(false)
+    expect(canTransitionOrderStatus(ORDER_STATUS.PICKED_UP, ORDER_STATUS.CANCELLED)).toBe(false)
+    expect(canTransitionOrderStatus(ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED)).toBe(false)
   })
 
   it('requires DPDP privacy consent on checkout and caps variant qty at 10', () => {
